@@ -7,6 +7,10 @@
 FROM node:22-alpine AS frontendbuild
 WORKDIR /web
 # 先只拷清单，让依赖层能被缓存：改业务代码不会触发重装依赖。
+# 注意锁文件必须包含各平台的 optional 依赖（rollup / esbuild 的原生二进制）。
+# 在 macOS 上生成的锁文件如果缺了 linux-musl 条目，npm ci 装完会在
+# `npm run build` 阶段报 "Cannot find module '@rollup/rollup-linux-arm64-musl'"。
+# 重新生成：cd frontend && rm package-lock.json node_modules && npm install --legacy-peer-deps
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
