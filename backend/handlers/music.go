@@ -432,6 +432,26 @@ func (h *MusicHandler) GetTrack(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"item": track})
 }
 
+// GetTrackLyrics GET /api/music/tracks/:id/lyrics — 公开只读。
+//
+// 访客在音乐库里播放一首歌时,要能看到这首歌的歌词。
+// 歌词库(收词/检索/摘句)是后台模块,但「正在听的这一首的歌词」属于听歌本身,
+// 所以在音乐库这边开一个只读口子:优先用关联到歌词库的版本(更规整),
+// 没有关联就回落到曲目自带的正文。
+func (h *MusicHandler) GetTrackLyrics(c *gin.Context) {
+	track, ok := h.loadTrack(c)
+	if !ok {
+		return
+	}
+	text, source := track.Lyrics, "local"
+	if track.LyricSongID != "" {
+		if song, err := h.db.GetLyricSong(track.LyricSongID); err == nil && song.Lyrics != "" {
+			text, source = song.Lyrics, "library"
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"text": text, "source": source})
+}
+
 // GetStats GET /api/music/stats
 func (h *MusicHandler) GetStats(c *gin.Context) {
 	stats := h.cachedStats()

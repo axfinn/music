@@ -7,6 +7,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,8 +16,20 @@ import (
 type Config struct {
 	Server  ServerConfig `yaml:"server"`
 	DataDir string       `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
+	Admin   AdminConfig  `yaml:"admin"`
 	Music   MusicConfig  `yaml:"music"`
 	Lyrics  LyricsConfig `yaml:"lyrics"`
+}
+
+// AdminConfig 后台管理口令。
+//
+// 站点分两种身份：
+//   - 访客：只能浏览与播放音乐库（音乐库是公开内容）；
+//   - 管理：额外能进后台操作歌词库、歌词发现、以及曲库的增删改。
+//
+// 留空 = 纯访客模式，后台接口一律关闭。
+type AdminConfig struct {
+	Password string `yaml:"password"` // 管理口令；留空=禁用后台
 }
 
 // ServerConfig HTTP 服务配置。
@@ -34,10 +47,9 @@ type MusicConfig struct {
 // LyricsConfig 歌词库配置：站内在线抓取（lyrics_finder.py）+ 对外 v1 接口鉴权。
 //
 // 两条鉴权线互不相干：
-//   - AdminPassword 管「增删 API 密钥」这类站内管理动作（留空则该动作禁用）；
+//   - 管理口令（见 AdminConfig）管「后台管理」这类站内动作（留空则该动作禁用）；
 //   - 对外调用本身走密钥表 lyric_api_keys，密钥在页面上签发/撤销，不落配置文件。
 type LyricsConfig struct {
-	AdminPassword   string   `yaml:"admin_password"`
 	PythonBin       string   `yaml:"python_bin"`         // 解释器路径；留空自动探测
 	ScriptPath      string   `yaml:"script_path"`        // lyrics_finder.py 路径；留空自动探测
 	TimeoutSeconds  int      `yaml:"timeout_seconds"`    // 单次抓取总超时，默认 45
@@ -69,17 +81,40 @@ func DefaultConfig() *Config {
 // Load 读取 yaml 配置，yaml 缺省项用默认值补齐；再叠加环境变量覆盖。
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	var raw []byte
 	if path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			if err := yaml.Unmarshal(data, cfg); err != nil {
+		var err error
+		raw, err = os.ReadFile(path)
+		if err == nil {
+			if err := yaml.Unmarshal(raw, cfg); err != nil {
 				return nil, err
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, err
 		}
 	}
+	migrateLegacyAdmin(cfg, raw)
 	applyEnv(cfg)
 	return cfg, nil
+}
+
+// migrateLegacyAdmin 兼容旧配置项 lyrics.admin_password。
+//
+// 早期「签发 API 密钥」用的就是这个口令；现在后台管理用同一个口令，
+// 所以老配置直接沿用，不强迫用户改 config.yaml。
+func migrateLegacyAdmin(cfg *Config, raw []byte) {
+	if cfg.Admin.Password != "" || len(raw) == 0 {
+		return
+	}
+	var legacy struct {
+		Lyrics struct {
+			AdminPassword string `yaml:"admin_password"`
+		} `yaml:"lyrics"`
+	}
+	if err := yaml.Unmarshal(raw, &legacy); err != nil {
+		return
+	}
+	cfg.Admin.Password = strings.TrimSpace(legacy.Lyrics.AdminPassword)
 }
 
 // LoadOrDefault 与 Load 相同，但忽略配置文件不存在的错误（用默认配置启动）。
@@ -93,7 +128,7 @@ func LoadOrDefault(path string) *Config {
 	return cfg
 }
 
-// applyEnv 叠加环境变量（PORT / DATA_DIR / LYRICS_ADMIN_PASSWORD）。
+// applyEnv 叠加环境变量（PORT / DATA_DIR / ADMIN_PASSWORD）。
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
@@ -103,7 +138,7 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("DATA_DIR"); v != "" {
 		cfg.DataDir = v
 	}
-	if v := os.Getenv("LYRICS_ADMIN_PASSWORD"); v != "" {
-		cfg.Lyrics.AdminPassword = v
+	if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
+		cfg.Admin.Password = v
 	}
 }

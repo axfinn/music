@@ -15,6 +15,7 @@
 
 - [通用约定](#通用约定)
 - [鉴权](#鉴权)
+- [管理员会话](#管理员会话)
 - [密钥管理](#密钥管理)
 - [对外接口 · 歌词库](#对外接口--歌词库-apiv1lyrics)
 - [对外接口 · 音乐库](#对外接口--音乐库-apiv1music)
@@ -32,7 +33,8 @@
 | 环境 | 地址 |
 |---|---|
 | 在线 | `https://music.jaxiu.cn` |
-| 本地 | `http://localhost:8080` |
+| 本地（`go run .`） | `http://localhost:8080` |
+| 本地（`docker compose up`） | `http://localhost:8083` |
 
 ### 返回信封
 
@@ -126,19 +128,39 @@ lyrics:
 
 ---
 
+## 管理员会话
+
+后台（歌词库 / 歌词发现 / 曲库增删改）需要管理员身份，凭证是**会话 Cookie**，不是 API Key。
+
+口令在 `admin.password`（环境变量 `ADMIN_PASSWORD`）；留空 = 纯访客模式，后台接口全部返回 403。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/admin/login` | 用口令换会话 Cookie（`{"password":"..."}`） |
+| `POST` | `/api/admin/logout` | 清掉会话 Cookie |
+| `GET` | `/api/admin/session` | 当前身份：`{"enabled":bool,"authenticated":bool}` |
+
+Cookie 名 `music_admin_session`，HttpOnly，有效期 7 天。改口令等于换密钥，所有旧会话立即失效。
+
+---
+
 ## 密钥管理
 
-密钥的增删改走**站内接口**，由管理员密码保护（`lyrics.admin_password`，留空则整个密钥管理功能禁用）。
+密钥的增删改走**站内接口**，由管理员会话保护。
 
-请求头：
+先登录换会话 Cookie（口令在 `admin.password`；留空则整个后台禁用）：
 
 ```http
-X-Admin-Password: <你的管理员密码>
+POST /api/admin/login
+Content-Type: application/json
+
+{"password": "<你的管理员口令>"}
 ```
 
-也支持 `?admin_password=` 查询参数。
+成功后服务端下发 `music_admin_session` Cookie（HttpOnly），后续请求自动带上。
 
-> 管理员密码和 API Key 是**两套东西**：密码管"改密钥"，密钥管"调接口"。
+> 管理员会话和 API Key 是**两套东西**：会话管"进后台"，密钥管"调对外接口"。
+> 对外的 `/api/v1/*` 仍然只认密钥，不认管理员会话。
 
 ### 列出密钥
 
@@ -470,14 +492,18 @@ X-API-Key: lly_xxx
 
 ## 站内接口 · 音乐库 (`/api/music`)
 
-站内接口不做密钥鉴权（服务本身由反向代理保护）。
+站内接口不做密钥鉴权（服务本身由反向代理保护），但**分公开与管理两档**：
 
-### 读取
+- **公开**：访客用。浏览与听歌。
+- **管理**：需要管理员会话（Cookie）。改曲库、关联歌词这些。
+
+### 读取（公开）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/music/tracks` | 曲库列表（`keyword`/`fav`/`sort`/`limit`/`offset`） |
 | `GET` | `/api/music/tracks/:id` | 曲目详情 |
+| `GET` | `/api/music/tracks/:id/lyrics` | 这首歌的歌词（优先关联到歌词库的版本，没有则用自带正文） |
 | `GET` | `/api/music/stats` | 统计 |
 | `GET` | `/api/music/snapshot` | 全量快照（带 `rev` 增量语义） |
 | `GET` | `/api/music/stream/:id` | 音频流（支持 Range） |
@@ -487,14 +513,14 @@ X-API-Key: lly_xxx
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/api/music/tracks` | 上传音频（multipart） |
-| `PATCH` | `/api/music/tracks/:id` | 改元数据 |
-| `DELETE` | `/api/music/tracks/:id` | 删除曲目 |
-| `POST` | `/api/music/tracks/:id/favorite` | 收藏 / 取消收藏 |
-| `POST` | `/api/music/tracks/:id/played` | 记一次播放 |
-| `POST` | `/api/music/tracks/:id/cover` | 上传封面 |
+| `POST` | `/api/music/tracks/:id/favorite` | 收藏 / 取消收藏（**公开**） |
+| `POST` | `/api/music/tracks/:id/played` | 记一次播放（**公开**） |
+| `POST` | `/api/music/tracks` | 上传音频（multipart，**管理**） |
+| `PATCH` | `/api/music/tracks/:id` | 改元数据（**管理**） |
+| `DELETE` | `/api/music/tracks/:id` | 删除曲目（**管理**） |
+| `POST` | `/api/music/tracks/:id/cover` | 上传封面（**管理**） |
 
-### 歌词联动
+### 歌词联动（管理）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -504,7 +530,7 @@ X-API-Key: lly_xxx
 | `DELETE` | `/api/music/tracks/:id/lyrics` | 解除关联 |
 | `POST` | `/api/music/lyrics/auto-match` | 批量自动匹配所有未关联曲目 |
 
-### 维护
+### 维护（管理）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -513,6 +539,9 @@ X-API-Key: lly_xxx
 ---
 
 ## 站内接口 · 歌词库 (`/api/lyrics`)
+
+**整组接口都需要管理员会话**（Cookie `music_admin_session`）。
+歌词库是后台模块：收词、检索、摘句、拼提示词都是管理动作，访客只听歌。
 
 ### 读取
 
@@ -552,6 +581,8 @@ X-API-Key: lly_xxx
 ---
 
 ## 站内接口 · 歌词发现 (`/api/discovery`)
+
+**整组接口都需要管理员会话**（Cookie `music_admin_session`），同歌词库。
 
 发现流把**本地库里已有的**和**还没拿到的**混在一条流里推给用户。
 
@@ -707,7 +738,7 @@ X-API-Key: lly_xxx
 | `204` | 无内容 | CORS 预检 |
 | `400` | 参数错误 | 缺少必填参数、JSON 解析失败 |
 | `401` | 未鉴权 | 缺密钥、密钥无效或已撤销 |
-| `403` | 禁止 | 未配置 `admin_password`，密钥管理被禁用 |
+| `403` | 禁止 | 不是管理员身份，或未配置 `admin.password`（后台被禁用） |
 | `404` | 不存在 | 曲目/歌词不存在、路由未命中 |
 | `409` | 冲突 | 重复的「艺人 - 标题」歌词 |
 | `429` | 限流 | 超出单密钥每分钟上限 |

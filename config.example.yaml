@@ -8,12 +8,16 @@ server:
 # 音频 / 封面 / SQLite 根目录（Docker 下挂持久卷）
 data_dir: "./data"
 
+# 后台管理口令。
+# 留空 = 纯访客模式：只有音乐库能听，歌词库 / 歌词发现 / 曲库增删改全部关闭。
+admin:
+  password: ""                 # 管理口令；留空=禁用后台
+
 music:
   audio_max_bytes: 209715200   # 单曲上限 200MB
   cover_max_bytes: 15728640    # 封面上限 15MB
 
 lyrics:
-  admin_password: ""           # 留空=禁用「签发/撤销 API 密钥」等站内管理动作
   python_bin: ""               # 留空自动探测 python3
   script_path: ""              # 留空自动探测 scripts/lyrics_finder.py
   timeout_seconds: 45

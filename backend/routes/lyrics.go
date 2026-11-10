@@ -10,9 +10,14 @@ import (
 )
 
 // RegisterLyricsRoutes 歌词库接口(均在 /api/lyrics 下)。
-// 读接口不加限流(个人内网工具);写接口复用统一的 createRateLimiter。
-func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, createRateLimiter *middleware.RateLimiter) {
-	l := api.Group("/lyrics")
+//
+// 整个歌词库是「管理模块」:收录 / 检索 / 摘句 / 拼 prompt 都是后台动作,
+// 所以全部挂在管理门后面。访客在音乐库听歌时看到的歌词,
+// 走 /api/music/tracks/:id/lyrics（公开只读),不经过这里。
+//
+// 写接口另外走 createRateLimiter 限流。
+func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, createRateLimiter *middleware.RateLimiter, admin *middleware.Admin) {
+	l := api.Group("/lyrics", admin.Middleware())
 	{
 		l.GET("/songs", h.ListSongs)
 		l.POST("/songs", createRateLimiter.Middleware(), h.CreateSong)
@@ -42,12 +47,13 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 		l.POST("/fragments/:id/use", h.MarkFragmentUsed)
 
 		// ── 在线抓取(内置 lyrics_finder.py) ──
-		// 站内沿用现有开放策略(与歌词库其他接口一致);抓取要起外部进程,单独限流。
+		// 抓取要起外部进程,单独限流。
 		l.GET("/fetch/status", h.FetchStatus)
 		l.POST("/fetch", createRateLimiter.Middleware(), h.FetchLyrics)
 		l.POST("/fetch/batch", createRateLimiter.Middleware(), h.FetchLyricsBatch)
 
-		// ── 对外 API 密钥管理(管理员密码门,密码在 lyrics.admin_password) ──
+		// ── 对外 API 密钥管理 ──
+		// 密钥本身是给别的系统调 /api/v1/* 用的;签发/撤销是管理动作。
 		l.GET("/api-keys", h.ListAPIKeys)
 		l.POST("/api-keys", h.CreateAPIKey)
 		l.PATCH("/api-keys/:id", h.UpdateAPIKey)
@@ -57,7 +63,8 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 	// ── 歌词发现 ──
 	// 单独一个组而不是塞进 /lyrics：发现是"逛"，
 	// 不是"查某一首歌"，路径语义不一样，接口版本演进也能分开走。
-	d := api.Group("/discovery")
+	// 同属后台模块,整组挂管理门。
+	d := api.Group("/discovery", admin.Middleware())
 	{
 		d.GET("/feed", h.DiscoveryFeed)           // 本地 + 在线混合的发现流
 		d.GET("/status", h.DiscoveryStatus)       // 池状态与种子配置
@@ -70,7 +77,8 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 // RegisterLyricsAPIRoutes 对外接口 /api/v1/lyrics/*。
 // 与站内接口刻意分开：站内是"自己用"，这里是"给别的系统用"，签名/限流/返回信封都不同。
 // 注意：/ping 是公开自检接口（无需密钥，便于外部探活），单独挂在只带 CORS 的组下；
-// 其余接口全部走 API Key 鉴权。
+// 其余接口全部走 API Key 鉴权 —— 这条线与「站内管理身份」无关，
+// 外部系统用密钥调用，不受后台开关影响。
 func RegisterLyricsAPIRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler) {
 	pub := api.Group("/v1/lyrics", h.V1CORS())
 	pub.GET("/ping", h.V1Ping)

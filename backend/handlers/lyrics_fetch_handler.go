@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strconv"
@@ -264,30 +263,14 @@ func (h *LyricsHandler) saveFetchedSong(res *lyricFetchResult, body lyricFetchRe
 	return song, "", nil
 }
 
-// ── 站内：API 密钥管理（管理员密码门） ──
-
-func (h *LyricsHandler) requireLyricAdmin(c *gin.Context) bool {
-	pwd := strings.TrimSpace(h.cfg.Lyrics.AdminPassword)
-	if pwd == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "未配置 lyrics.admin_password，密钥管理接口已禁用"})
-		return false
-	}
-	given := c.GetHeader("X-Admin-Password")
-	if given == "" {
-		given = c.Query("admin_password")
-	}
-	if subtle.ConstantTimeCompare([]byte(given), []byte(pwd)) != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码不正确"})
-		return false
-	}
-	return true
-}
+// ── 站内：API 密钥管理 ──
+//
+// 身份由路由层的管理门保证（见 routes.RegisterLyricsRoutes）：
+// 整个 /api/lyrics 组都挂在 middleware.Admin 后面，
+// 所以这里不用再单独校验口令。
 
 // ListAPIKeys GET /api/lyrics/api-keys
 func (h *LyricsHandler) ListAPIKeys(c *gin.Context) {
-	if !h.requireLyricAdmin(c) {
-		return
-	}
 	keys, err := h.db.ListLyricAPIKeys()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
@@ -298,9 +281,6 @@ func (h *LyricsHandler) ListAPIKeys(c *gin.Context) {
 
 // CreateAPIKey POST /api/lyrics/api-keys — 明文只在这里返回一次。
 func (h *LyricsHandler) CreateAPIKey(c *gin.Context) {
-	if !h.requireLyricAdmin(c) {
-		return
-	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -322,9 +302,6 @@ func (h *LyricsHandler) CreateAPIKey(c *gin.Context) {
 
 // UpdateAPIKey PATCH /api/lyrics/api-keys/:id — 目前只支持启用/撤销。
 func (h *LyricsHandler) UpdateAPIKey(c *gin.Context) {
-	if !h.requireLyricAdmin(c) {
-		return
-	}
 	var req struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -341,9 +318,6 @@ func (h *LyricsHandler) UpdateAPIKey(c *gin.Context) {
 
 // DeleteAPIKey DELETE /api/lyrics/api-keys/:id
 func (h *LyricsHandler) DeleteAPIKey(c *gin.Context) {
-	if !h.requireLyricAdmin(c) {
-		return
-	}
 	if err := h.db.DeleteLyricAPIKey(c.Param("id")); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "密钥不存在"})
 		return

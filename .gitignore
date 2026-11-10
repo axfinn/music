@@ -19,3 +19,7 @@ config.yaml
 *.swp
 .idea/
 .vscode/
+
+# 部署脚本的运行时产物（.env 含密码，backups 含数据）
+.env
+/backups/
