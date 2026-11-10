@@ -18,9 +18,9 @@ import (
 	"time"
 	"unicode"
 
-	"music-lyrics-archive/backend/config"
-	"music-lyrics-archive/backend/middleware"
-	"music-lyrics-archive/backend/models"
+	"github.com/axfinn/music/backend/config"
+	"github.com/axfinn/music/backend/middleware"
+	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
 )

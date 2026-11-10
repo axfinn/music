@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"music-lyrics-archive/backend/models"
+	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
 )

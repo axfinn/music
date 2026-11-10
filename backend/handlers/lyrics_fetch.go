@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode"
 
-	"music-lyrics-archive/backend/config"
+	"github.com/axfinn/music/backend/config"
 )
 
 // ── 歌词在线抓取（内置 lyrics_finder.py） ──

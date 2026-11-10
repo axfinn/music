@@ -3,8 +3,8 @@ package routes
 import (
 	"net/http"
 
-	"music-lyrics-archive/backend/handlers"
-	"music-lyrics-archive/backend/middleware"
+	"github.com/axfinn/music/backend/handlers"
+	"github.com/axfinn/music/backend/middleware"
 
 	"github.com/gin-gonic/gin"
 )

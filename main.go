@@ -1,4 +1,4 @@
-// music-lyrics-archive 后端入口。
+// music 后端入口。
 //
 // 单二进制同时承载 API（音乐库 / 歌词库 / 歌词发现 / v1 开放接口）与静态前端。
 // 开发期前端由 Vite 单独跑（默认 5173）并代理 /api 到后端；
@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"music-lyrics-archive/backend/config"
-	"music-lyrics-archive/backend/handlers"
-	"music-lyrics-archive/backend/middleware"
-	"music-lyrics-archive/backend/models"
-	"music-lyrics-archive/backend/routes"
+	"github.com/axfinn/music/backend/config"
+	"github.com/axfinn/music/backend/handlers"
+	"github.com/axfinn/music/backend/middleware"
+	"github.com/axfinn/music/backend/models"
+	"github.com/axfinn/music/backend/routes"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,7 +42,7 @@ func main() {
 	api := r.Group("/api")
 	{
 		api.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "music-lyrics-archive"})
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "music"})
 		})
 
 		// 音乐库路由(上传/封面走独立限流:200 次/分钟)。
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	addr := cfg.Server.Host + ":" + itoa(cfg.Server.Port)
-	log.Printf("music-lyrics-archive 监听 %s (data=%s)", addr, cfg.DataDir)
+	log.Printf("music 监听 %s (data=%s)", addr, cfg.DataDir)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
 	}

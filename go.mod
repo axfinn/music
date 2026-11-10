@@ -1,4 +1,4 @@
-module music-lyrics-archive
+module github.com/axfinn/music
 
 go 1.25
 

@@ -1,4 +1,4 @@
-// Package config 提供 music-lyrics-archive 的极简配置加载。
+// Package config 提供 github.com/axfinn/music 的极简配置加载。
 //
 // 只保留音乐库 / 歌词库两大模块需要的字段，不照搬 devtools 那套大而全的配置。
 // 配置来源优先级：环境变量 > config.yaml > 默认值。
