@@ -53,6 +53,9 @@ func main() {
 		lyricsHandler := handlers.NewLyricsHandler(db, cfg)
 		routes.RegisterLyricsRoutes(api, lyricsHandler, middleware.NewRateLimiter(60, time.Minute))
 		routes.RegisterLyricsAPIRoutes(api, lyricsHandler)
+
+		// 音乐库对外对称接口(/api/v1/music)。站内 /api/music 不变。
+		routes.RegisterMusicAPIRoutes(api, musicHandler)
 	}
 
 	// ── 静态前端 + SPA 回落 ──

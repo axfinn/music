@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"music-lyrics-archive/backend/config"
+	"music-lyrics-archive/backend/middleware"
 	"music-lyrics-archive/backend/models"
 
 	"github.com/gin-gonic/gin"
@@ -66,12 +67,16 @@ var musicImageTypes = map[string]string{
 }
 
 type MusicHandler struct {
-	db    *models.DB
+	db  *models.DB
+	cfg *config.Config // 仅用于对外 v1 接口的 CORS 白名单(lyrics.allow_origins)
 	files *musicFileIndex
 
 	// 音频与封面落盘目录,由 config.DataDir 驱动。
 	musicFileDir  string
 	musicCoverDir string
+
+	// keyLimiter 对外 v1 接口按密钥限流(与歌词库对称)。
+	keyLimiter *middleware.RateLimiter
 
 	// rev 是「曲库数据版本」。任何写操作 +1,用于 snapshot 的条件请求:
 	// 数据没变时后端只回几十字节的 not_modified,不再重传整份曲库。
@@ -91,11 +96,17 @@ func NewMusicHandler(db *models.DB, cfg *config.Config) *MusicHandler {
 	// 确保目录存在,避免首次上传因目录缺失而失败。
 	_ = os.MkdirAll(fileDir, 0o755)
 	_ = os.MkdirAll(coverDir, 0o755)
+	limit := cfg.Lyrics.APIKeyRateLimit
+	if limit <= 0 {
+		limit = 60
+	}
 	return &MusicHandler{
 		db:            db,
+		cfg:           cfg,
 		files:         &musicFileIndex{dir: fileDir},
 		musicFileDir:  fileDir,
 		musicCoverDir: coverDir,
+		keyLimiter:    middleware.NewRateLimiter(limit, time.Minute),
 	}
 }
 
