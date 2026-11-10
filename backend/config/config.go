@@ -1,0 +1,103 @@
+// Package config 提供 music-lyrics-archive 的极简配置加载。
+//
+// 只保留音乐库 / 歌词库两大模块需要的字段，不照搬 devtools 那套大而全的配置。
+// 配置来源优先级：环境变量 > config.yaml > 默认值。
+package config
+
+import (
+	"os"
+	"strconv"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config 全局配置。
+type Config struct {
+	Server  ServerConfig  `yaml:"server"`
+	DataDir string        `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
+	Music   MusicConfig   `yaml:"music"`
+	Lyrics  LyricsConfig  `yaml:"lyrics"`
+}
+
+// ServerConfig HTTP 服务配置。
+type ServerConfig struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+// MusicConfig 音乐库配置。
+type MusicConfig struct {
+	AudioMaxBytes int64 `yaml:"audio_max_bytes"` // 单曲上限，默认 200MB
+	CoverMaxBytes int64 `yaml:"cover_max_bytes"` // 封面上限，默认 15MB
+}
+
+// LyricsConfig 歌词库配置：站内在线抓取（lyrics_finder.py）+ 对外 v1 接口鉴权。
+//
+// 两条鉴权线互不相干：
+//   - AdminPassword 管「增删 API 密钥」这类站内管理动作（留空则该动作禁用）；
+//   - 对外调用本身走密钥表 lyric_api_keys，密钥在页面上签发/撤销，不落配置文件。
+type LyricsConfig struct {
+	AdminPassword   string   `yaml:"admin_password"`
+	PythonBin       string   `yaml:"python_bin"`        // 解释器路径；留空自动探测
+	ScriptPath      string   `yaml:"script_path"`       // lyrics_finder.py 路径；留空自动探测
+	TimeoutSeconds  int      `yaml:"timeout_seconds"`   // 单次抓取总超时，默认 45
+	MaxConcurrent   int      `yaml:"max_concurrent"`    // 同时抓取进程上限，默认 3
+	APIKeyRateLimit int      `yaml:"api_key_rate_limit"` // 单密钥每分钟上限，默认 60
+	AllowOrigins    []string `yaml:"allow_origins"`     // 对外接口 CORS 白名单；空=允许任意来源
+}
+
+// DefaultConfig 返回带合理默认值的配置。
+func DefaultConfig() *Config {
+	return &Config{
+		Server:  ServerConfig{Host: "0.0.0.0", Port: 8080},
+		DataDir: "./data",
+		Music:   MusicConfig{AudioMaxBytes: 200 << 20, CoverMaxBytes: 15 << 20},
+		Lyrics: LyricsConfig{
+			TimeoutSeconds:  45,
+			MaxConcurrent:   3,
+			APIKeyRateLimit: 60,
+		},
+	}
+}
+
+// Load 读取 yaml 配置，yaml 缺省项用默认值补齐；再叠加环境变量覆盖。
+func Load(path string) (*Config, error) {
+	cfg := DefaultConfig()
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if err := yaml.Unmarshal(data, cfg); err != nil {
+				return nil, err
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	applyEnv(cfg)
+	return cfg, nil
+}
+
+// LoadOrDefault 与 Load 相同，但忽略配置文件不存在的错误（用默认配置启动）。
+func LoadOrDefault(path string) *Config {
+	cfg, err := Load(path)
+	if err != nil {
+		// 配置解析失败不应阻断启动；回退默认值并继续。
+		cfg = DefaultConfig()
+		applyEnv(cfg)
+	}
+	return cfg
+}
+
+// applyEnv 叠加环境变量（PORT / DATA_DIR / LYRICS_ADMIN_PASSWORD）。
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Port = p
+		}
+	}
+	if v := os.Getenv("DATA_DIR"); v != "" {
+		cfg.DataDir = v
+	}
+	if v := os.Getenv("LYRICS_ADMIN_PASSWORD"); v != "" {
+		cfg.Lyrics.AdminPassword = v
+	}
+}

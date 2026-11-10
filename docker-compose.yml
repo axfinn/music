@@ -1,0 +1,16 @@
+services:
+  music-lyrics-archive:
+    build: .
+    container_name: music-lyrics-archive
+    ports:
+      - "8080:8080"
+    environment:
+      # 覆盖 config.yaml 的环境变量示例
+      - PORT=8080
+      - DATA_DIR=/app/data
+      # - LYRICS_ADMIN_PASSWORD=change-me
+    volumes:
+      - ./data:/app/data
+      # 如需自定义配置，取消下一行注释并准备 config.yaml
+      # - ./config.yaml:/app/config.yaml
+    restart: unless-stopped
