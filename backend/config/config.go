@@ -129,6 +129,9 @@ func LoadOrDefault(path string) *Config {
 }
 
 // applyEnv 叠加环境变量（PORT / DATA_DIR / ADMIN_PASSWORD）。
+//
+// ADMIN_PASSWORD 是新名字；旧部署（compose 里写的是 LYRICS_ADMIN_PASSWORD）
+// 也认，避免升级后后台突然变成「未配置口令」把人锁在外面。
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
@@ -139,6 +142,8 @@ func applyEnv(cfg *Config) {
 		cfg.DataDir = v
 	}
 	if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
+		cfg.Admin.Password = v
+	} else if v := os.Getenv("LYRICS_ADMIN_PASSWORD"); v != "" {
 		cfg.Admin.Password = v
 	}
 }
