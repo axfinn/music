@@ -11,9 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"music-lyrics-archive/backend/config"
+	"music-lyrics-archive/backend/handlers"
+	"music-lyrics-archive/backend/middleware"
 	"music-lyrics-archive/backend/models"
+	"music-lyrics-archive/backend/routes"
 
 	"github.com/gin-gonic/gin"
 )
@@ -41,8 +45,11 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "music-lyrics-archive"})
 		})
 
-		// TODO(Phase 2/3): 音乐库与歌词库路由在此挂载
-		// routes.RegisterMusicRoutes(api, musicHandler, musicLimiter)
+		// 音乐库路由(上传/封面走独立限流:200 次/分钟)。
+		musicHandler := handlers.NewMusicHandler(db, cfg)
+		routes.RegisterMusicRoutes(api, musicHandler, middleware.NewRateLimiter(200, time.Minute))
+
+		// TODO(Phase 3): 歌词库路由在此挂载
 		// routes.RegisterLyricsRoutes(api, lyricsHandler, createLimiter)
 		// routes.RegisterLyricsAPIRoutes(api, lyricsHandler)
 	}
