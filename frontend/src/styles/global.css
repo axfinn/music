@@ -1,0 +1,64 @@
+/* 全局基础样式。
+ *
+ * 只做三件事：重置、页面底色、字体。具体的配色变量由各功能自己的样式文件负责
+ * （音乐库在 views/MusicLibrary/theme.css，歌词库与发现流各自内聚）。
+ * 不要在这里塞宿主应用的主题变量，本项目要能独立部署。
+ */
+
+:root {
+  /* 顶部导航条高度。页面用 100dvh 铺满时需要减掉它，
+     所以做成变量，由各页面自己引用（见 MusicLibrary/theme.css）。 */
+  --app-bar-h: 48px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* 与音乐库 theme.css 的 .dark 底色一致，避免切换页面时闪白。 */
+  background: #0b0d12;
+  color: #e8eaf0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+}
+
+/* 滚动条：深色下默认滚动条太扎眼，统一压暗。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
