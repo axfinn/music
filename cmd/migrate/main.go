@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/axfinn/music/backend/models"
 
@@ -206,7 +207,7 @@ func copyTable(src, tgt *sql.DB, table string, dryRun bool) (int, error) {
 		}
 		vals := make([]any, len(keep))
 		for i, idx := range keepIdx {
-			vals[i] = all[idx]
+			vals[i] = normalizeValue(all[idx])
 		}
 		if stmt != nil {
 			if _, err := stmt.Exec(vals...); err != nil {
@@ -292,6 +293,19 @@ func copyMusicFiles(opt options) error {
 	fmt.Printf("\n音频/封面文件：拷贝 %d 个（%.1f MB），跳过 %d 个已存在，失败 %d 个%s\n",
 		copied, float64(totalBytes)/(1024*1024), skipped, failed, dryRunSuffix(opt.dryRun))
 	return nil
+}
+
+// normalizeValue 修掉驱动带来的时间格式漂移。
+//
+// modernc 会把 DATETIME 文本读成 time.Time，原样写回目标库时会变成
+// "2026-10-30 17:42:40.294064882 +0800 +0800"（Go time.String()，时区重复），
+// 本项目的时间解析认不出来 —— 列表接口直接 500。这里统一成源库原本的形态
+// （"2006-01-02 15:04:05.999999999-07:00"），语义不变、精度不丢。
+func normalizeValue(v any) any {
+	if tm, ok := v.(time.Time); ok {
+		return tm.Format("2006-01-02 15:04:05.999999999-07:00")
+	}
+	return v
 }
 
 func copyFile(src, dst string) error {

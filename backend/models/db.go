@@ -11,6 +11,8 @@ import (
 	"database/sql/driver"
 	"encoding/hex"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +88,19 @@ type TS time.Time
 
 const tsLayout = "2006-01-02 15:04:05"
 
+// 历史数据里的时间有四种写法，都得认：
+//
+//	"2026-11-10 15:30:06"                       本项目写入的规范格式
+//	"2026-11-10 15:30:06.560582875+08:00"       devtools 原始文本
+//	"2026-11-10 15:30:06.560582875 +0800 +0800" Go time.String() 的时区重复写法
+//	"2026-11-10T15:30:06Z" / "2026-11-05"       RFC3339 / 纯日期
+//
+// 一条脏记录不能让整页列表 500，所以解析要宽容，落库仍用规范格式。
+var (
+	tsDateTimeRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:([Zz])|[ ]?([+-])(\d{2}):?(\d{2}))?`)
+	tsDateOnlyRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
+)
+
 // Scan 兼容 SQLite 的 "2006-01-02 15:04:05" 与 RFC3339 / 带时区格式。
 func (t *TS) Scan(v any) error {
 	switch x := v.(type) {
@@ -105,13 +120,65 @@ func (t *TS) Scan(v any) error {
 
 func (t *TS) parse(s string) error {
 	s = strings.TrimSpace(s)
-	for _, layout := range []string{tsLayout, time.RFC3339, time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02"} {
+	if s == "" {
+		*t = TS(time.Time{})
+		return nil
+	}
+	if m := tsDateTimeRe.FindStringSubmatch(s); m != nil {
+		tm := time.Date(
+			tsAtoi(m[1]), time.Month(tsAtoi(m[2])), tsAtoi(m[3]),
+			tsAtoi(m[4]), tsAtoi(m[5]), tsAtoi(m[6]),
+			tsFraction(m[7]), tsLocation(m[8], m[9], m[10], m[11]),
+		)
+		*t = TS(tm)
+		return nil
+	}
+	if m := tsDateOnlyRe.FindStringSubmatch(s); m != nil {
+		*t = TS(time.Date(tsAtoi(m[1]), time.Month(tsAtoi(m[2])), tsAtoi(m[3]), 0, 0, 0, 0, time.Local))
+		return nil
+	}
+	// 兜底：交给标准库再试一遍（不常见的布局）。
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, tsLayout} {
 		if parsed, err := time.ParseInLocation(layout, s, time.Local); err == nil {
 			*t = TS(parsed)
 			return nil
 		}
 	}
 	return fmt.Errorf("TS.parse: 无法解析时间 %q", s)
+}
+
+func tsAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// tsFraction 把任意位数的秒小数补/截成纳秒。
+func tsFraction(s string) int {
+	if s == "" {
+		return 0
+	}
+	if len(s) > 9 {
+		s = s[:9]
+	}
+	for len(s) < 9 {
+		s += "0"
+	}
+	return tsAtoi(s)
+}
+
+// tsLocation 有时区偏移就按固定时区解释，没有则按本地时区（历史数据都是本地时间）。
+func tsLocation(z, sign, hour, min string) *time.Location {
+	if z != "" {
+		return time.UTC
+	}
+	if sign == "" {
+		return time.Local
+	}
+	off := tsAtoi(hour)*3600 + tsAtoi(min)*60
+	if sign == "-" {
+		off = -off
+	}
+	return time.FixedZone("", off)
 }
 
 // Value 落库统一用 tsLayout 文本。
