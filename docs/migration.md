@@ -44,6 +44,38 @@ old/
 
 ---
 
+## 更省事的做法：直接对拷 Docker 卷
+
+旧数据在命名卷里、动辄几十 GB 时，`docker cp` 等于白拷两遍。可以直接把旧卷
+**只读**挂进一个临时容器，让迁移工具在里面跑：
+
+```bash
+# 1) 编一份 linux 版迁移工具（纯 Go，免 CGO，几秒）
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/migrate ./cmd/migrate
+
+# 2) 先停服务，避免迁移与在线请求抢 SQLite 写锁
+docker stop music
+
+# 3) 旧卷 :ro 挂载，新数据目录挂到 /target，直接对拷
+docker run --rm \
+  -v devtools_devtools-data:/source:ro \
+  -v /tmp/migrate:/migrate:ro \
+  -v "$PWD/data:/target" \
+  alpine:3.20 /migrate \
+    -source-db /source/paste.db \
+    -source-data-dir /source \
+    -target-db /target/music.db \
+    -target-data-dir /target
+
+# 4) 起服务
+docker start music
+```
+
+源卷只读挂载 + 工具内部 `mode=ro` 打开，是双保险；已存在的同名同大小文件自动跳过，
+所以中途中断重跑只补差异，不会重复占用空间。
+
+---
+
 ## 试运行
 
 **先加 `-dry-run`**：只统计要迁多少，不写任何东西。
@@ -174,3 +206,13 @@ A：迁移工具会跳过目标库没有的列，并在输出里提示跳过了�
 **Q：密钥（`lyric_api_keys`）要一起迁吗？**
 A：迁。库里只存 sha256 哈希，明文不可恢复，所以**迁完之后旧系统里的那把密钥仍然能用**
 （哈希一样），但你没法从新库里看到明文。如果不想保留旧密钥，迁完在「歌词库 → API 密钥」页面撤销即可。
+
+**Q：迁移明明「全部成功」，打开曲库却报 500 / `TS.parse: 无法解析时间 … +0800 +0800`？**
+A：旧版迁移工具的问题。驱动会把 `DATETIME` 文本读成 `time.Time`，原样写回时序列化成了
+Go 的 `time.String()`（例：`2026-10-30 17:42:40.294064882 +0800 +0800`），本项目解析不了。
+已在 `e57c05c` 修复（迁移时统一格式化为 `2006-01-02 15:04:05.999999999-07:00`，时间解析也做了兼容）。
+如果是旧工具迁出来的库，删掉 `data/music.db` 用新工具重跑即可 —— 音频文件会被跳过，几秒完成。
+
+**Q：迁移要多久？**
+A：数据库一万行左右是秒级；瓶颈在音频拷贝。本机实测 3149 个文件 / 20.5 GB 约 2.5 分钟
+（外部卷 bind mount，约 150 MB/s）。
