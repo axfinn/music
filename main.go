@@ -49,9 +49,10 @@ func main() {
 		musicHandler := handlers.NewMusicHandler(db, cfg)
 		routes.RegisterMusicRoutes(api, musicHandler, middleware.NewRateLimiter(200, time.Minute))
 
-		// TODO(Phase 3): 歌词库路由在此挂载
-		// routes.RegisterLyricsRoutes(api, lyricsHandler, createLimiter)
-		// routes.RegisterLyricsAPIRoutes(api, lyricsHandler)
+		// 歌词库路由(创建/摘句等写操作单独限流:60 次/分钟)。
+		lyricsHandler := handlers.NewLyricsHandler(db, cfg)
+		routes.RegisterLyricsRoutes(api, lyricsHandler, middleware.NewRateLimiter(60, time.Minute))
+		routes.RegisterLyricsAPIRoutes(api, lyricsHandler)
 	}
 
 	// ── 静态前端 + SPA 回落 ──

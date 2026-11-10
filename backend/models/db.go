@@ -131,6 +131,11 @@ func (t TS) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + time.Time(t).Format(time.RFC3339) + `"`), nil
 }
 
+// IsZero 判断是否为零值（无对应时间）。
+func (t TS) IsZero() bool {
+	return time.Time(t).IsZero()
+}
+
 // UnmarshalJSON 接受 RFC3339 文本。
 func (t *TS) UnmarshalJSON(b []byte) error {
 	s := strings.Trim(string(b), `"`)
