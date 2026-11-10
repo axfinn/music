@@ -25,6 +25,7 @@
 #   ADMIN_PASSWORD=xxxx            站内管理口令（留空则纯访客模式）
 #   MUSIC_IMAGE=music              镜像名
 #   MUSIC_TAG=latest               镜像标签（发布时建议用版本号或 git sha）
+#   MUSIC_PULL=1                   构建前强制拉取基础镜像（默认不拉）
 #   BACKUP_DIR=./backups           备份目录
 #
 set -Eeuo pipefail
@@ -154,7 +155,16 @@ cmd_build() {
   ensure_data_dir
   log "构建镜像 ${MUSIC_IMAGE}:${MUSIC_TAG} ..."
   # 标签来自 compose 的 image: ${MUSIC_IMAGE}:${MUSIC_TAG}，无需再传 -t。
-  dc build --pull "${SERVICE}"
+  #
+  # 默认不强制拉基础镜像：国内网络下 docker.io 常直接 502，
+  # 一上来就 --pull 会让发布在第一步失败（代码本身没问题）。
+  # 需要更新基础镜像时显式 MUSIC_PULL=1 再发布。
+  local args=(build)
+  if [[ "${MUSIC_PULL:-0}" == "1" ]]; then
+    args+=(--pull)
+    log "MUSIC_PULL=1：先拉取最新基础镜像"
+  fi
+  dc "${args[@]}" "${SERVICE}"
   ok "镜像构建完成：${MUSIC_IMAGE}:${MUSIC_TAG}"
 }
 
