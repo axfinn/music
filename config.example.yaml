@@ -1,4 +1,4 @@
-# music-lyrics-archive 配置示例
+# music 配置示例（github.com/axfinn/music）
 # 复制为 config.yaml 并按需修改；未写出的项使用默认值。
 
 server:

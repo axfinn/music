@@ -1,7 +1,7 @@
 services:
-  music-lyrics-archive:
+  music:
     build: .
-    container_name: music-lyrics-archive
+    container_name: music
     ports:
       - "8080:8080"
     environment:

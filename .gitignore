@@ -1,7 +1,7 @@
 # 运行时数据（SQLite + 用户上传的音频/封面），不入库
 /data/
 
-# 前端构建产物
+# 前端构建产物与依赖
 /frontend/dist/
 /frontend/node_modules/
 
@@ -9,5 +9,13 @@
 config.yaml
 
 # 编译产物
-/music-lyrics-archive
+/music
+/axfinn-music
+/app
 *.exe
+
+# OS / 编辑器杂项
+.DS_Store
+*.swp
+.idea/
+.vscode/
