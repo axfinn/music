@@ -14,23 +14,23 @@ func init() {
 // MusicTrack 音乐库曲目。音频与封面文件落盘 ./data/music(容器内挂 /app/data 持久卷),
 // 数据库存元数据;lyrics 支持纯文本或 LRC 格式,由前端播放器解析同步。
 type MusicTrack struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Artist        string `json:"artist"`
-	Album         string `json:"album"`
-	Lyrics        string `json:"lyrics"`
-	Note          string `json:"note"`
-	Filename      string `json:"filename"`
-	OriginalName  string `json:"original_name"`
-	ContentType   string `json:"content_type"`
-	CoverFilename string `json:"cover_filename"`
-	SizeBytes     int64  `json:"size_bytes"`
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	Artist        string  `json:"artist"`
+	Album         string  `json:"album"`
+	Lyrics        string  `json:"lyrics"`
+	Note          string  `json:"note"`
+	Filename      string  `json:"filename"`
+	OriginalName  string  `json:"original_name"`
+	ContentType   string  `json:"content_type"`
+	CoverFilename string  `json:"cover_filename"`
+	SizeBytes     int64   `json:"size_bytes"`
 	DurationSec   float64 `json:"duration_sec"`
-	Favorite      bool   `json:"favorite"`
-	PlayCount     int    `json:"play_count"`
-	LyricSongID   string `json:"lyric_song_id"`
-	CreatedAt     TS     `json:"created_at"`
-	UpdatedAt     TS     `json:"updated_at"`
+	Favorite      bool    `json:"favorite"`
+	PlayCount     int     `json:"play_count"`
+	LyricSongID   string  `json:"lyric_song_id"`
+	CreatedAt     TS      `json:"created_at"`
+	UpdatedAt     TS      `json:"updated_at"`
 	// Playable 不是数据库字段,由 handler 按「磁盘上能否找到音频文件」实时计算,
 	// 供前端把坏掉的曲目标出来,而不是点了没反应/静默跳到下一首。
 	Playable *bool `json:"playable,omitempty"`
@@ -92,24 +92,24 @@ const musicTrackColumns = `id, title, artist, album, lyrics, note, filename, ori
 // 列表页只需要知道「有没有」,真正查看/编辑时再走 GET /tracks/:id 取全文。
 // 这样一次全量快照不再把整本歌词集反复序列化、传输、JSON.parse。
 type MusicTrackBrief struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Artist        string `json:"artist"`
-	Album         string `json:"album"`
-	HasLyrics     bool   `json:"has_lyrics"`
-	HasNote       bool   `json:"has_note"`
-	Filename      string `json:"-"`
-	OriginalName  string `json:"-"`
-	ContentType   string `json:"-"`
-	CoverFilename string `json:"cover_filename"`
-	SizeBytes     int64  `json:"size_bytes"`
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	Artist        string  `json:"artist"`
+	Album         string  `json:"album"`
+	HasLyrics     bool    `json:"has_lyrics"`
+	HasNote       bool    `json:"has_note"`
+	Filename      string  `json:"-"`
+	OriginalName  string  `json:"-"`
+	ContentType   string  `json:"-"`
+	CoverFilename string  `json:"cover_filename"`
+	SizeBytes     int64   `json:"size_bytes"`
 	DurationSec   float64 `json:"duration_sec"`
-	Favorite      bool   `json:"favorite"`
-	PlayCount     int    `json:"play_count"`
-	LyricSongID   string `json:"lyric_song_id"`
-	CreatedAt     TS     `json:"created_at"`
-	UpdatedAt     TS     `json:"updated_at"`
-	Playable      *bool  `json:"playable,omitempty"`
+	Favorite      bool    `json:"favorite"`
+	PlayCount     int     `json:"play_count"`
+	LyricSongID   string  `json:"lyric_song_id"`
+	CreatedAt     TS      `json:"created_at"`
+	UpdatedAt     TS      `json:"updated_at"`
+	Playable      *bool   `json:"playable,omitempty"`
 }
 
 // 大字段不进 SELECT,只算布尔标记;filename/original_name/content_type 仍要读出来

@@ -24,22 +24,22 @@ func init() {
 
 // LyricSong 收录的一首歌词。
 type LyricSong struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Artist    string `json:"artist"`
-	Album     string `json:"album"`
-	Language  string `json:"language"` // zh/yue/en/ja/ko/other
-	Genre     string `json:"genre"`    // pop/rock/folk/rap/rnb/electronic/ballad/other
-	Era       string `json:"era"`      // 年代,如 1990s / 2000s
-	Tags      []string `json:"tags"`   // 自由标签:意象/手法/情绪
-	Lyrics    string `json:"lyrics"`
-	Note      string `json:"note"` // 创作笔记:为什么收录、句式特点
-	Source    string `json:"source"`
-	Favorite  bool   `json:"favorite"`
-	LineCount int    `json:"line_count"`
-	CharCount int    `json:"char_count"`
-	CreatedAt TS     `json:"created_at"`
-	UpdatedAt TS     `json:"updated_at"`
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Artist    string   `json:"artist"`
+	Album     string   `json:"album"`
+	Language  string   `json:"language"` // zh/yue/en/ja/ko/other
+	Genre     string   `json:"genre"`    // pop/rock/folk/rap/rnb/electronic/ballad/other
+	Era       string   `json:"era"`      // 年代,如 1990s / 2000s
+	Tags      []string `json:"tags"`     // 自由标签:意象/手法/情绪
+	Lyrics    string   `json:"lyrics"`
+	Note      string   `json:"note"` // 创作笔记:为什么收录、句式特点
+	Source    string   `json:"source"`
+	Favorite  bool     `json:"favorite"`
+	LineCount int      `json:"line_count"`
+	CharCount int      `json:"char_count"`
+	CreatedAt TS       `json:"created_at"`
+	UpdatedAt TS       `json:"updated_at"`
 }
 
 func (db *DB) InitLyrics() error {
@@ -746,18 +746,18 @@ func stripLRCAndBrackets(line string) string {
 
 // LyricFragment 摘句:从某首歌里摘出来的句子,单独成条便于检索与随机取用。
 type LyricFragment struct {
-	ID        string    `json:"id"`
-	SongID    string    `json:"song_id"` // 可为空(自由摘句)
-	SongTitle string    `json:"song_title"`
-	Artist    string    `json:"artist"`
-	Text      string    `json:"text"`
-	Kind      string    `json:"kind"` // hook/chorus/verse/bridge/line
-	Tags      []string  `json:"tags"`
-	Note      string    `json:"note"`
-	Favorite  bool      `json:"favorite"`
-	UseCount  int       `json:"use_count"`
-	CreatedAt TS        `json:"created_at"`
-	UpdatedAt TS        `json:"updated_at"`
+	ID        string   `json:"id"`
+	SongID    string   `json:"song_id"` // 可为空(自由摘句)
+	SongTitle string   `json:"song_title"`
+	Artist    string   `json:"artist"`
+	Text      string   `json:"text"`
+	Kind      string   `json:"kind"` // hook/chorus/verse/bridge/line
+	Tags      []string `json:"tags"`
+	Note      string   `json:"note"`
+	Favorite  bool     `json:"favorite"`
+	UseCount  int      `json:"use_count"`
+	CreatedAt TS       `json:"created_at"`
+	UpdatedAt TS       `json:"updated_at"`
 }
 
 const lyricFragmentColumns = `id, song_id, text, kind, tags, note, favorite, use_count, created_at, updated_at`

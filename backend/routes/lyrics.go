@@ -53,6 +53,18 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 		l.PATCH("/api-keys/:id", h.UpdateAPIKey)
 		l.DELETE("/api-keys/:id", h.DeleteAPIKey)
 	}
+
+	// ── 歌词发现 ──
+	// 单独一个组而不是塞进 /lyrics：发现是"逛"，
+	// 不是"查某一首歌"，路径语义不一样，接口版本演进也能分开走。
+	d := api.Group("/discovery")
+	{
+		d.GET("/feed", h.DiscoveryFeed)           // 本地 + 在线混合的发现流
+		d.GET("/status", h.DiscoveryStatus)       // 池状态与种子配置
+		d.GET("/online", h.DiscoveryOnlineSearch) // 按歌名/艺人在线搜
+		d.POST("/save", h.DiscoverySave)          // 把在线结果收进库
+		d.POST("/refresh", h.DiscoveryRefresh)    // 强制刷新候选池（异步）
+	}
 }
 
 // RegisterLyricsAPIRoutes 对外接口 /api/v1/lyrics/*。

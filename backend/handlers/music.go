@@ -67,8 +67,8 @@ var musicImageTypes = map[string]string{
 }
 
 type MusicHandler struct {
-	db  *models.DB
-	cfg *config.Config // 仅用于对外 v1 接口的 CORS 白名单(lyrics.allow_origins)
+	db    *models.DB
+	cfg   *config.Config // 仅用于对外 v1 接口的 CORS 白名单(lyrics.allow_origins)
 	files *musicFileIndex
 
 	// 音频与封面落盘目录,由 config.DataDir 驱动。

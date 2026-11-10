@@ -20,3 +20,10 @@ lyrics:
   max_concurrent: 3
   api_key_rate_limit: 60       # 单密钥每分钟上限
   allow_origins: []            # 对外 v1 接口 CORS 白名单；空=允许任意来源
+
+  # ── 歌词发现 ──
+  # 在线候选池：后台定时抓一批"你可能还没收录"的歌，与本地内容混在发现流里。
+  discovery_seeds: []            # 种子歌单（"歌名 - 艺人"）；留空=用内置默认列表
+  discovery_pool_size: 24        # 候选池上限
+  discovery_batch_size: 4        # 每次刷新抓几首
+  discovery_refresh_minutes: 30  # 池刷新间隔（分钟）

@@ -35,14 +35,14 @@ func init() {
 
 // LyricAPIKey 一把对外调用密钥（不含明文）。
 type LyricAPIKey struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"` // 形如 lly_1a2b，仅用于辨认
-	Hash       string     `json:"-"`
-	Enabled    bool       `json:"enabled"`
-	CallCount  int        `json:"call_count"`
-	CreatedAt  TS         `json:"created_at"`
-	LastUsedAt *TS        `json:"last_used_at"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Prefix     string `json:"prefix"` // 形如 lly_1a2b，仅用于辨认
+	Hash       string `json:"-"`
+	Enabled    bool   `json:"enabled"`
+	CallCount  int    `json:"call_count"`
+	CreatedAt  TS     `json:"created_at"`
+	LastUsedAt *TS    `json:"last_used_at"`
 }
 
 func (db *DB) InitLyricAPIKeys() error {

@@ -20,6 +20,7 @@
 - [对外接口 · 音乐库](#对外接口--音乐库-apiv1music)
 - [站内接口 · 音乐库](#站内接口--音乐库-apimusic)
 - [站内接口 · 歌词库](#站内接口--歌词库-apilyrics)
+- [站内接口 · 歌词发现](#站内接口--歌词发现-apidiscovery)
 - [错误码](#错误码)
 
 ---
@@ -547,6 +548,153 @@ X-API-Key: lly_xxx
 | `POST` | `/api/lyrics/fragments/:id/use` | 标记摘句已使用 |
 | `POST` | `/api/lyrics/fetch` | 在线抓取 |
 | `POST` | `/api/lyrics/fetch/batch` | 批量抓取 |
+
+---
+
+## 站内接口 · 歌词发现 (`/api/discovery`)
+
+发现流把**本地库里已有的**和**还没拿到的**混在一条流里推给用户。
+
+在线部分刻意做成「后台定时抓取 + 内存候选池」而不是「请求时现抓」：
+抓一次要起 Python 进程、等上游网络，2~10 秒起步，放在请求里会让首屏卡死。
+
+### `GET /api/discovery/feed`
+
+一条混着本地与在线的发现流。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | int | 20 | 条数（上限 60） |
+| `online` | string | — | `0` = 不含在线候选 |
+| `local` | string | — | `0` = 不含本地素材 |
+
+```json
+{
+  "items": [
+    {
+      "kind": "local_song",
+      "id": "lyr_...",
+      "title": "晴天",
+      "artist": "周杰伦",
+      "text": "故事的小黄花 从出生那年就飘着",
+      "meta": "63 行 · 叶惠美 · 收藏",
+      "source": "百度",
+      "url": "",
+      "saved": true
+    },
+    {
+      "kind": "online",
+      "id": "十年",
+      "title": "十年",
+      "artist": "陈奕迅",
+      "text": "如果那两个字没有颤抖 我不会发现 我难受",
+      "meta": "来自 网易云音乐",
+      "source": "网易云音乐",
+      "url": "https://...",
+      "saved": false
+    }
+  ],
+  "stats": {
+    "local_songs": 128,
+    "missing_lyrics": 17,
+    "online_candidates": 8,
+    "online_ready": true,
+    "pool_updated_at": "2026-11-10T17:14:20+08:00",
+    "pool_error": ""
+  }
+}
+```
+
+`kind` 有六种，前端按它分派渲染：
+
+| `kind` | 含义 | 建议动作 |
+|---|---|---|
+| `local_song` | 本地库随机一首歌 | 打开详情 |
+| `fragment` | 随机一句摘句 | 复制 / 标记已用 |
+| `artist` | 艺人榜条目 | 看该艺人的所有歌 |
+| `word` | 高频词 | 检索这个词 |
+| `needs_lyrics` | 音乐库里「有歌没歌词」的曲目 | 在线补歌词（`track_id` 是曲目 ID） |
+| `online` | 在线抓到、**本地还没有**的候选 | 收进歌词库 |
+
+### `GET /api/discovery/status`
+
+候选池状态与种子配置。
+
+```json
+{
+  "ready": true,
+  "pool_size": 8,
+  "pool_updated_at": "2026-11-10T17:14:20+08:00",
+  "pool_error": "",
+  "refreshing": false,
+  "seed_count": 25,
+  "seeds": ["晴天 - 周杰伦", "..."]
+}
+```
+
+### `GET /api/discovery/online`
+
+按歌名/艺人在线搜一首。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `q` | string | 必填 | 查询词，支持「歌名 - 艺人」格式 |
+| `limit` | int | 5 | 上限 20 |
+
+```json
+{
+  "item": { "song": "十年", "singer": "陈奕迅", "engine": "baidu-card", "lyrics": "..." },
+  "preview": "如果那两个字没有颤抖 / 我不会发现 我难受 / ...",
+  "saved": false,
+  "existing_id": "",
+  "in_music": false
+}
+```
+
+`saved` 表示歌词库里已有；`in_music` 表示音乐库里已有同一首歌。
+
+### `POST /api/discovery/save`
+
+把一条在线结果收进歌词库。`lyrics` 可以带上正文（带上就不用再抓一次）。
+
+```json
+{
+  "song": "十年",
+  "artist": "陈奕迅",
+  "lyrics": "[00:00.00]如果那两个字没有颤抖",
+  "language": "zh",
+  "genre": "pop",
+  "era": "2000s",
+  "tags": ["治愈"],
+  "note": "一句顶一万句"
+}
+```
+
+成功返回 `201`：
+
+```json
+{ "saved": { "id": "lyr_...", "title": "十年", "artist": "陈奕迅", "...": "..." } }
+```
+
+已存在同一首（艺人+歌名）时返回 `200`：
+
+```json
+{ "duplicate": true, "existing_id": "lyr_..." }
+```
+
+### `POST /api/discovery/refresh`
+
+强制刷新候选池。**异步**执行，立即返回 `202`：
+
+```json
+{ "started": true }
+```
+
+刷新已在进行时返回 `200`：
+
+```json
+{ "started": false, "message": "刷新已在进行中" }
+```
 
 ---
 

@@ -341,7 +341,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 			cid        int
 			name, typ  string
 			notNull    int
-			dfltValue sql.NullString
+			dfltValue  sql.NullString
 			primaryKey int
 		)
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &primaryKey); err != nil {

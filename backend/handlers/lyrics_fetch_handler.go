@@ -224,12 +224,15 @@ func (h *LyricsHandler) saveFetchedSong(res *lyricFetchResult, body lyricFetchRe
 	if existing, err := h.db.FindLyricSongByArtistTitle(artist, title); err == nil && existing != nil {
 		return nil, existing.ID, nil
 	}
-	source := "在线抓取"
-	if res.Source != "" {
-		source = "在线抓取 · " + res.Source
-	}
-	if res.Engine != "" {
-		source += " [" + res.Engine + "]"
+	source := strings.TrimSpace(res.Origin)
+	if source == "" {
+		source = "在线抓取"
+		if res.Source != "" {
+			source = "在线抓取 · " + res.Source
+		}
+		if res.Engine != "" {
+			source += " [" + res.Engine + "]"
+		}
 	}
 	note := strings.TrimSpace(body.Note)
 	if note == "" {

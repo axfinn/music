@@ -209,6 +209,9 @@ type lyricFetchResult struct {
 	LineCount int    `json:"line_count"`
 	Lyrics    string `json:"lyrics"`
 	ElapsedMS int64  `json:"elapsed_ms"`
+	// Origin 覆盖入库时的 source 文案（脚本不会产出这个字段）。
+	// 发现页把"用户自己带正文收进来的"也算作在线来源，但不该写成"在线抓取"。
+	Origin string `json:"origin,omitempty"`
 }
 
 // validate 把用户输入收敛成脚本能安全吃下的形态。

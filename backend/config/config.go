@@ -13,10 +13,10 @@ import (
 
 // Config 全局配置。
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	DataDir string        `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
-	Music   MusicConfig   `yaml:"music"`
-	Lyrics  LyricsConfig  `yaml:"lyrics"`
+	Server  ServerConfig `yaml:"server"`
+	DataDir string       `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
+	Music   MusicConfig  `yaml:"music"`
+	Lyrics  LyricsConfig `yaml:"lyrics"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -38,12 +38,18 @@ type MusicConfig struct {
 //   - 对外调用本身走密钥表 lyric_api_keys，密钥在页面上签发/撤销，不落配置文件。
 type LyricsConfig struct {
 	AdminPassword   string   `yaml:"admin_password"`
-	PythonBin       string   `yaml:"python_bin"`        // 解释器路径；留空自动探测
-	ScriptPath      string   `yaml:"script_path"`       // lyrics_finder.py 路径；留空自动探测
-	TimeoutSeconds  int      `yaml:"timeout_seconds"`   // 单次抓取总超时，默认 45
-	MaxConcurrent   int      `yaml:"max_concurrent"`    // 同时抓取进程上限，默认 3
+	PythonBin       string   `yaml:"python_bin"`         // 解释器路径；留空自动探测
+	ScriptPath      string   `yaml:"script_path"`        // lyrics_finder.py 路径；留空自动探测
+	TimeoutSeconds  int      `yaml:"timeout_seconds"`    // 单次抓取总超时，默认 45
+	MaxConcurrent   int      `yaml:"max_concurrent"`     // 同时抓取进程上限，默认 3
 	APIKeyRateLimit int      `yaml:"api_key_rate_limit"` // 单密钥每分钟上限，默认 60
-	AllowOrigins    []string `yaml:"allow_origins"`     // 对外接口 CORS 白名单；空=允许任意来源
+	AllowOrigins    []string `yaml:"allow_origins"`      // 对外接口 CORS 白名单；空=允许任意来源
+
+	// ── 歌词发现 ──
+	DiscoverySeeds          []string `yaml:"discovery_seeds"`           // 种子歌单（"歌名 - 艺人"）；留空用内置默认
+	DiscoveryPoolSize       int      `yaml:"discovery_pool_size"`       // 在线候选池上限，默认 24
+	DiscoveryBatchSize      int      `yaml:"discovery_batch_size"`      // 每次刷新抓几首，默认 4
+	DiscoveryRefreshMinutes int      `yaml:"discovery_refresh_minutes"` // 池刷新间隔（分钟），默认 30
 }
 
 // DefaultConfig 返回带合理默认值的配置。
