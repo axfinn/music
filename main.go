@@ -39,8 +39,29 @@ func main() {
 
 	r := gin.Default()
 
+	// ── 跨域：音乐库 / 歌词库只读接口 ──
+	// devtools 的魔法宠物运行在另一个源(devtools 站点)，需要跨域读取本站的
+	// 音乐与歌词；这些都是公开只读数据、无凭证，故用 * 放行并处理预检 OPTIONS。
+	r.Use(corsForPublicRead())
+
+	// ── 全站反爬 ──
+	// NoIndex 对所有响应生效（含 404、静态文件、音频流）；robots.txt 走显式路由，
+	// 免得被 SPA 回落成一张 HTML。/api 下的匿名数据接口再挂一层 Guard。
+	r.Use(middleware.NoIndex())
+	r.GET("/robots.txt", middleware.RobotsTxt())
+	antiCrawl := middleware.NewAntiCrawl(middleware.AntiCrawlOptions{
+		Enabled:           cfg.Security.AntiCrawl,
+		AnonymousReadRate: cfg.Security.AnonymousReadRate,
+		BulkReadRate:      cfg.Security.BulkReadRate,
+		StreamRate:        cfg.Security.StreamRate,
+		BlockUserAgents:   cfg.Security.BlockUserAgents,
+		AllowUserAgents:   cfg.Security.AllowUserAgents,
+	})
+
 	// ── API ──
 	api := r.Group("/api")
+	// 必须在注册任何子路由之前 Use：gin 的 Group 会在创建时复制父组 handlers。
+	api.Use(antiCrawl.Guard())
 	{
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "music"})
@@ -99,8 +120,43 @@ func main() {
 
 	addr := cfg.Server.Host + ":" + strconv.Itoa(cfg.Server.Port)
 	log.Printf("music 监听 %s (data=%s)", addr, cfg.DataDir)
-	if err := r.Run(addr); err != nil {
+	// 用 http.Server 而不是 r.Run()：把 gzip 包在 gin.Engine 外层，对 /api 的
+	// JSON 响应做透明压缩。曲库首屏 /snapshot 是 1.1MB 明文，压缩后约 170KB；
+	// 外层 nginx / CDN 默认只压 text/html，不压 application/json，只能在应用内做。
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           middleware.GzipHandler(r),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
+	}
+}
+
+// corsForPublicRead 为音乐库 / 歌词库的只读接口放开跨域。
+// 只作用于 /api/music 与 /api/lyrics 前缀；其余路由直接放行，不受影响。
+func corsForPublicRead() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if !strings.HasPrefix(path, "/api/music") && !strings.HasPrefix(path, "/api/lyrics") {
+			c.Next()
+			return
+		}
+		// 标记为本站「魔法宠物」跨站只读通道：放行反爬的 cross-site / 浏览器信号校验，
+		// 但限流(读/流媒体额度)依旧生效，避免被当成拖库口子。
+		c.Set("companionRead", true)
+		if origin := c.GetHeader("Origin"); origin != "" {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type")
+			c.Header("Access-Control-Max-Age", "86400")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
 	}
 }
 

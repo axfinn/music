@@ -11,19 +11,28 @@ import (
 
 // RegisterLyricsRoutes 歌词库接口(均在 /api/lyrics 下)。
 //
-// 整个歌词库是「管理模块」:收录 / 检索 / 摘句 / 拼 prompt 都是后台动作,
-// 所以全部挂在管理门后面。访客在音乐库听歌时看到的歌词,
-// 走 /api/music/tracks/:id/lyrics（公开只读),不经过这里。
+// 分两类:
+//   - 公开只读:列表 / 详情 / 随机一首 —— 魔法宠物(devtools 站点)跨域读词、访客看词用。
+//   - 管理动作:收录 / 摘句 / 抓取 / 密钥管理 —— 挂在管理门后面。
+//
+// 访客在音乐库听歌时看到的歌词走 /api/music/tracks/:id/lyrics（音乐库侧公开只读），
+// 不经过这里；这里的公开只读只服务于「按歌名/艺人检索歌词、随机来一句」这类读词场景。
 //
 // 写接口另外走 createRateLimiter 限流。
 func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, createRateLimiter *middleware.RateLimiter, admin *middleware.Admin) {
+	// 公开只读：读词不需要后台身份（数据本身就是给人看的）。
+	pub := api.Group("/lyrics")
+	{
+		pub.GET("/songs", h.ListSongs)
+		pub.GET("/songs/:id", h.GetSong)
+		pub.GET("/random", h.RandomSong)
+	}
+
 	l := api.Group("/lyrics", admin.Middleware())
 	{
-		l.GET("/songs", h.ListSongs)
 		l.POST("/songs", createRateLimiter.Middleware(), h.CreateSong)
 		// 批量导入走独立路径,避免与 /songs/:id 在同一路径段混合静态与通配。
 		l.POST("/import", createRateLimiter.Middleware(), h.BulkCreateSongs)
-		l.GET("/songs/:id", h.GetSong)
 		l.PATCH("/songs/:id", h.UpdateSong)
 		l.DELETE("/songs/:id", h.DeleteSong)
 		l.POST("/songs/:id/favorite", h.ToggleFavorite)
@@ -36,7 +45,6 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 		l.GET("/stats", h.GetStats)
 		l.GET("/artists", h.ListArtists)
 		l.GET("/words", h.GetWordFrequency)
-		l.GET("/random", h.RandomSong)
 		l.GET("/export", h.ExportSongs)
 
 		l.GET("/fragments", h.ListFragments)
