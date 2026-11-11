@@ -57,13 +57,13 @@ func RegisterMusicRoutes(api *gin.RouterGroup, h *handlers.MusicHandler, limiter
 }
 
 // RegisterMusicAPIRoutes 对外接口 /api/v1/music/*（与站内 /api/music 刻意分开）。
-// 对称于歌词库：/ping 是公开自检（只挂 CORS，不鉴权），其余全部走 API Key 鉴权。
-// 鉴权与 CORS 复用 lyric_api_keys 表与 lyrics 同一套逻辑。
-func RegisterMusicAPIRoutes(api *gin.RouterGroup, h *handlers.MusicHandler) {
-	pub := api.Group("/v1/music", h.V1CORS())
+// apiV1 与歌词库 v1 是同一个实例：同一把密钥、同一套 CORS、同一个限流额度。
+// /ping 走可选鉴权（不带密钥可探活，带了就报密钥用量），其余全部强制鉴权。
+func RegisterMusicAPIRoutes(api *gin.RouterGroup, h *handlers.MusicHandler, apiV1 *middleware.V1API) {
+	pub := api.Group("/v1/music", apiV1.CORS(), apiV1.OptionalKey())
 	pub.GET("/ping", h.V1Ping)
 
-	v1 := api.Group("/v1/music", h.V1CORS(), h.APIKeyAuth())
+	v1 := api.Group("/v1/music", apiV1.CORS(), apiV1.RequireKey())
 	{
 		// 浏览器预检请求不带密钥，必须在鉴权前就地返回；
 		// Gin 只有命中路由才会跑组中间件，所以补一条 OPTIONS 兜底。

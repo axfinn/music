@@ -4,7 +4,7 @@
 //   api.js / utils/        → 网络与纯函数（可单测）
 //   composables/           → 曲库状态、播放器桥接、歌词、上传
 //   components/ + theme.css → 视图与设计系统
-export default { name: 'MusicLibraryTool' }
+export default { name: 'MusicLibraryPage' }
 </script>
 
 <script setup>
@@ -23,7 +23,7 @@ import { useAdmin } from '../composables/useAdmin.js'
 
 import LibrarySidebar from './MusicLibrary/components/LibrarySidebar.vue'
 import LibraryTopbar from './MusicLibrary/components/LibraryTopbar.vue'
-import DiscoverHome from './MusicLibrary/components/DiscoverHome.vue'
+import LibraryHome from './MusicLibrary/components/LibraryHome.vue'
 import CollectionGrid from './MusicLibrary/components/CollectionGrid.vue'
 import TrackTable from './MusicLibrary/components/TrackTable.vue'
 import NowPlayingPanel from './MusicLibrary/components/NowPlayingPanel.vue'
@@ -128,7 +128,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', playback.handleKeydo
       <main class="ml-main">
         <LibraryTopbar />
 
-        <DiscoverHome v-if="section === 'discover'" />
+        <LibraryHome v-if="section === 'discover'" />
 
         <template v-else>
           <div class="section-bar ml-card">
@@ -222,21 +222,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', playback.handleKeydo
 }
 @media (max-width: 1080px) {
   .ml-shell { grid-template-columns: 150px minmax(0, 1fr); }
-  .ml-shell > :last-child { display: none; }
+  /* 平板宽度下不显示右侧大面板，隐藏规则放在 NowPlayingPanel 自己的样式里，
+     否则父组件的 display:none 会连带把手机端的固定迷你播放条一起藏掉。 */
 }
 @media (max-width: 768px) {
   .ml-shell {
     display: flex; flex-direction: column;
     /* 列向 flex 里子项按 max-content 撑宽过（实测侧栏撑到 657px），显式压回视口 */
     width: 100%; max-width: 100%; min-width: 0;
-    gap: 10px; padding: 10px 10px calc(20px + var(--player-bar-h, 0px));
+    gap: 10px;
+    /* 给常驻底部迷你播放条留出空间，否则最后几行内容会被盖住 */
+    padding: 10px 10px calc(88px + var(--player-bar-h, 0px));
   }
   .ml-main { width: 100%; min-width: 0; gap: 10px; }
   .section-bar { flex-wrap: wrap; padding: 9px 10px; }
   .sb-chips { order: 3; flex-basis: 100%; }
   .sb-play { margin-left: auto; }
   .ml-foot { display: none; }
-  /* 移动端把 Now Playing 放到内容之后，避免首屏被播放器占满 */
-  .ml-shell > :last-child { display: flex; order: 2; }
+  /* 迷你播放条已经 fixed，不占文档流；这里不要再设 display，
+     否则会盖掉 .np 自己的 grid / .np--idle 的 display:none */
+  .ml-shell > :last-child { order: 2; }
 }
 </style>

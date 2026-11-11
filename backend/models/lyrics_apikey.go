@@ -9,12 +9,14 @@ import (
 	"time"
 )
 
-// ── 歌词库对外 API 密钥(Lyric API Key) ──
-// 对外暴露 /api/v1/lyrics/* 时使用。约定：
+// ── 站点对外 API 密钥 ──
+// 表名与方法名沿用了歌词库时代的历史命名（不改生产库表结构），
+// 但语义上已是全站密钥：音乐与歌词两套 /api/v1/* 共用同一张表、同一把 key。
+// 约定：
 //   - 明文只在创建那一刻返回一次，库里只存 sha256(明文) 的十六进制，泄露数据库也拿不到可用 key；
 //   - 前缀字段保留头 8 位，便于在列表里辨认是哪一把，不构成凭据；
 //   - 撤销用 enabled=0，保留记录与调用次数，便于排查"谁在调"。
-// 与站内密码（X-Admin-Password）是两套东西：密码管"改密钥"，密钥管"调接口"。
+// 与站内管理口令是两套东西：口令管"改密钥"，密钥管"调接口"。
 
 var (
 	// ErrLyricAPIKeyNotFound 密钥不存在。
@@ -33,7 +35,7 @@ func init() {
 	RegisterInit("歌词库密钥(lyric_api_keys)", (*DB).InitLyricAPIKeys)
 }
 
-// LyricAPIKey 一把对外调用密钥（不含明文）。
+// LyricAPIKey 一把对外调用密钥（不含明文）。类型名保留以兼容既有调用点。
 type LyricAPIKey struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -147,6 +149,12 @@ func (db *DB) DeleteLyricAPIKey(id string) error {
 		return ErrLyricAPIKeyNotFound
 	}
 	return nil
+}
+
+// VerifyAPIKey 是全站对外的校验入口，语义与 VerifyLyricAPIKey 相同。
+// 新代码一律用这个名字，不再让音乐库去调一个带 "Lyric" 前缀的方法。
+func (db *DB) VerifyAPIKey(plain string) (*LyricAPIKey, error) {
+	return db.VerifyLyricAPIKey(plain)
 }
 
 // VerifyLyricAPIKey 校验明文密钥，命中则返回记录并累加调用次数。

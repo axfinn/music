@@ -12,6 +12,6 @@ export function provideMusicContext(ctx) {
 
 export function useMusicContext() {
   const ctx = inject(KEY, null)
-  if (!ctx) throw new Error('Music Library 组件必须挂在 MusicLibraryTool 内部')
+  if (!ctx) throw new Error('MusicLibrary 组件必须挂在 MusicLibraryPage 内部')
   return ctx
 }

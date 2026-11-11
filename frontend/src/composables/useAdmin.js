@@ -10,23 +10,13 @@
  * 真正的权限判定永远在后端，前端只是据此决定显示什么。
  */
 import { ref, computed } from 'vue'
+import { request, json } from '../api/client.js'
 
 // enabled  : 后端有没有配置管理口令。没配就没有后台，登录页也不该出现。
 // authenticated: 当前浏览器带的是不是有效会话。
 const enabled = ref(false)
 const authenticated = ref(false)
 const checked = ref(false)
-
-async function request(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin', // 会话是 Cookie，必须显式带上
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
-  return data
-}
 
 /** 查一次当前身份。应用启动时调一次即可。 */
 export async function refreshAdmin() {
@@ -45,10 +35,7 @@ export async function refreshAdmin() {
 
 /** 管理员登录。口令对了才发会话 Cookie。 */
 export async function login(password) {
-  const data = await request('/api/admin/login', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  })
+  const data = await request('/api/admin/login', json({ password }))
   enabled.value = true
   authenticated.value = !!data.authenticated
   return authenticated.value

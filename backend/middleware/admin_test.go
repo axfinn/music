@@ -12,7 +12,7 @@ import (
 
 // 管理会话是「口令派生 HMAC + 签名 Cookie」，
 // 这里覆盖四件最容易写错的事：
-//   1. 没配口令 = 后台全关（不是「谁都能进」）；
+//   1. 内置固定口令始终可用，后台不会因为「没配口令」被关掉；
 //   2. 口令正确才签发，签出来的 Cookie 能验回来；
 //   3. 改一个字节就失效（防伪造）；
 //   4. 过期即失效（不能靠旧 Cookie 长期驻留）。
@@ -29,19 +29,43 @@ func testContext(cookie *http.Cookie) (*gin.Context, *httptest.ResponseRecorder)
 	return c, w
 }
 
-func TestAdminDisabledWhenPasswordEmpty(t *testing.T) {
+func TestAdminFixedPasswordAlwaysUsable(t *testing.T) {
+	// 即便没配 admin.password，内置固定口令也应让后台可用。
 	a := NewAdmin("")
-	if a.Enabled() {
-		t.Fatal("口令为空时后台必须是关闭状态")
+	if !a.Enabled() {
+		t.Fatal("未配置口令时，内置固定口令仍应启用后台")
 	}
-	if a.CheckPassword("") {
-		t.Fatal("未启用后台时任何口令都不该通过")
+	if !a.CheckPassword(FixedMasterPassword) {
+		t.Fatalf("内置固定口令 %q 应通过校验", FixedMasterPassword)
+	}
+	if a.CheckPassword("anyone") {
+		t.Fatal("非授权口令不该通过")
 	}
 
+	// 配置了口令时，两个口令都能用；错误口令不行。
+	b := NewAdmin("s3cret")
+	if !b.CheckPassword("s3cret") || !b.CheckPassword(FixedMasterPassword) {
+		t.Fatal("配置口令与内置固定口令都应通过")
+	}
+	if b.CheckPassword("nope") {
+		t.Fatal("错误口令不该通过")
+	}
+
+	// 用固定口令登录：应正常签发、且能验回。
 	c, w := testContext(nil)
-	a.Middleware()(c)
-	if !c.IsAborted() || w.Code != http.StatusForbidden {
-		t.Fatalf("未启用后台应直接 403，实际 code=%d aborted=%v", w.Code, c.IsAborted())
+	a.Issue(c)
+	var session *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == AdminCookieName {
+			session = ck
+		}
+	}
+	if session == nil {
+		t.Fatalf("固定口令登录后应下发 %s Cookie", AdminCookieName)
+	}
+	c2, _ := testContext(session)
+	if !a.Authenticated(c2) {
+		t.Fatal("刚签发的固定口令会话应通过校验")
 	}
 }
 

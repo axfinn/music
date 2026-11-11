@@ -56,7 +56,7 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
 </script>
 
 <template>
-  <aside class="np ml-card" aria-label="正在播放">
+  <aside class="np ml-card" :class="{ 'np--idle': !hasPlayback }" aria-label="正在播放">
     <div class="np-head">
       <span class="ml-eyebrow">NOW PLAYING</span>
       <span v-if="hasPlayback" class="np-live"><i /> 播放中</span>
@@ -164,13 +164,13 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
   position: sticky;
   /* 顶部对齐主内容卡片；底部同时避开常驻播放条与右下角宠物浮窗，
      否则宠物会压在控件上把点击吃掉（实测 900px 高时队列按钮点不到）。 */
-  top: 18px;
+  top: var(--ml-sticky-top, 58px);
   align-self: start;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 14px;
-  max-height: calc(100dvh - 36px - var(--player-bar-h, 0px) - var(--np-pet-reserve, 300px));
+  max-height: calc(100dvh - var(--app-bar-h, 48px) - 36px - var(--player-bar-h, 0px) - var(--np-pet-reserve, 300px));
   overflow: hidden;
 }
 .np-head { display: flex; align-items: center; justify-content: space-between; }
@@ -246,15 +246,68 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
   .np { padding: 12px; gap: 7px; }
   .np-art { width: min(100%, 150px); }
 }
+/* 平板（769~1080）不显示右侧播放面板；移动端改用下面的固定迷你条。
+   隐藏规则放在组件内部，避免父级 .ml-shell 的 display 规则误伤迷你条。 */
+@media (min-width: 769px) and (max-width: 1080px) {
+  .np { display: none; }
+}
+
 @media (max-width: 768px) {
+  /* 手机上把「正在播放」收成常驻底部迷你条。它原本是内容流末尾的一整块，
+     页面能滚动之后仍要滑很久才够得着暂停 / 切歌，等于听不了歌。 */
   .np {
-    position: static; max-height: none;
-    padding: 12px; gap: 10px;
+    position: fixed;
+    /* 桌面样式给了 top（sticky 偏移），fixed 时必须清掉，
+       否则 top / bottom 同时存在会把迷你条顶到页面上方。 */
+    top: auto;
+    left: 8px; right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto 34px;
+    grid-template-areas: "art meta controls lyrics";
+    align-items: center;
+    gap: 8px;
+    max-height: none;
+    padding: 8px 10px 12px;
+    border-radius: 16px;
+    background: var(--ml-elevated);
+    box-shadow: var(--ml-shadow-lg);
     /* 手机端宠物默认收成一枚 🐾，只需要让开它那一小块 */
     --np-pet-reserve: 0px;
   }
-  .np-art { width: 132px; }
-  .np-idle { padding: 16px 0; }
-  .idle-art { width: 130px; }
+  /* 没在播放时不占底部空间，首页本身就有「开始播放」入口 */
+  .np--idle { display: none; }
+
+  .np-head, .np-volume, .np-meta-actions, .np-time { display: none; }
+
+  .np-art { grid-area: art; width: 42px; align-self: center; }
+  /* size-xl 的大字是 92px，缩进 42px 封面会被裁成半个字，压回小字号 */
+  .np-art :deep(.size-xl) { border-radius: 9px; box-shadow: none; }
+  .np-art :deep(.size-xl .art-letter) { font-size: 22px; }
+  .np-art :deep(.size-xl .art-note) { font-size: 9px; }
+  .np-art :deep(.art-play) { display: none; }
+  .np-title-row .ml-tag { display: none; }
+  .np-meta { grid-area: meta; text-align: left; min-width: 0; }
+  .np-title-row { justify-content: flex-start; min-width: 0; }
+  .np-meta h2 { font-size: 13px; max-width: none; min-width: 0; }
+  .np-meta p { margin: 2px 0 0; font-size: 11px; }
+
+  /* 进度条贴着迷你条底边，仍可点按拖动 */
+  .np-progress { position: absolute; left: 10px; right: 10px; bottom: 3px; height: 4px; gap: 0; }
+  .np-bar { height: 4px; }
+  .np-bar-track { height: 3px; }
+  .np-bar-tip { bottom: 12px; }
+
+  .np-controls { grid-area: controls; gap: 2px; }
+  /* 只留 上一首 / 播放 / 下一首，随机与循环交给沉浸播放页 */
+  .np-controls > :first-child, .np-controls > :last-child { display: none; }
+  .np-controls .ml-icon-btn { width: 32px; height: 32px; }
+  .np-play { width: 36px; height: 36px; margin: 0 2px; box-shadow: none; }
+
+  .np-actions { grid-area: lyrics; display: block; padding: 0; border: 0; }
+  /* 歌词按钮收成图标，队列入口在手机上让位 */
+  .np-act { width: 34px; height: 34px; padding: 0; font-size: 0; justify-content: center; }
+  .np-act:nth-child(2), .np-act .tab-count { display: none; }
 }
 </style>

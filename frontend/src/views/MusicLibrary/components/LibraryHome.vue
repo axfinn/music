@@ -46,7 +46,7 @@ const quickActions = computed(() => [
 </script>
 
 <template>
-  <div class="discover">
+  <div class="library-home">
     <!-- Hero -->
     <section class="hero ml-card">
       <div class="hero-art">
@@ -141,7 +141,7 @@ const quickActions = computed(() => [
 </template>
 
 <style scoped>
-.discover { display: flex; flex-direction: column; gap: 26px; }
+.library-home { display: flex; flex-direction: column; gap: 26px; }
 
 .hero {
   display: grid;
@@ -220,7 +220,7 @@ const quickActions = computed(() => [
   .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 768px) {
-  .discover { gap: 18px; }
+  .library-home { gap: 18px; }
   .hero { grid-template-columns: 110px minmax(0, 1fr); gap: 14px; padding: 14px; }
   .hero-body h2 { font-size: 19px; }
   .hero-stats { gap: 10px; margin-top: 8px; }
@@ -231,6 +231,12 @@ const quickActions = computed(() => [
   .quick { padding: 9px; }
   .quick-arrow { display: none; }
   .shelf-card { flex-basis: 116px; }
-  .dual { grid-template-columns: 1fr; }
+  /* 排行榜里是 nowrap 长歌名，min-content 会把单列 grid 轨道撑到 700px，
+     造成整页横向溢出（手机上能左右拖动）。用 minmax(0,1fr) + min-width:0 压回去。 */
+  .dual { grid-template-columns: minmax(0, 1fr); }
+  .rank, .loved { min-width: 0; padding: 12px; }
+  .rank-row, .loved-item { min-width: 0; overflow: hidden; }
+  .rank-meta, .loved-meta { min-width: 0; }
+  .rank-count { flex: none; }
 }
 </style>

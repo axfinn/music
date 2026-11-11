@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/axfinn/music/backend/config"
-	"github.com/axfinn/music/backend/middleware"
 	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
@@ -25,23 +24,19 @@ const (
 )
 
 type LyricsHandler struct {
-	db         *models.DB
-	cfg        *config.Config
-	fetcher    *LyricsFetcher          // 在线抓取器，可为 nil（未启用/环境缺 python 时接口会明确报错）
-	keyLimiter *middleware.RateLimiter // 对外接口按密钥限流
-	discovery  *discoveryPool          // 歌词发现的在线候选池（进程内状态）
+	db        *models.DB
+	cfg       *config.Config
+	fetcher   *LyricsFetcher // 在线抓取器，可为 nil（未启用/环境缺 python 时接口会明确报错）
+	discovery *discoveryPool // 歌词发现的在线候选池（进程内状态）
 }
 
 func NewLyricsHandler(db *models.DB, cfg *config.Config) *LyricsHandler {
-	h := &LyricsHandler{db: db, cfg: cfg, discovery: &discoveryPool{}}
-	// 抓取与对外接口都从配置来；配置缺失时用保守默认值，不让构造失败拖垮整个服务启动。
-	h.fetcher = NewLyricsFetcher(cfg.Lyrics)
-	limit := cfg.Lyrics.APIKeyRateLimit
-	if limit <= 0 {
-		limit = 60
+	return &LyricsHandler{
+		db:        db,
+		cfg:       cfg,
+		fetcher:   NewLyricsFetcher(cfg.Lyrics),
+		discovery: &discoveryPool{},
 	}
-	h.keyLimiter = middleware.NewRateLimiter(limit, time.Minute)
-	return h
 }
 
 // ── 与音乐库联动(反向) ──

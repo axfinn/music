@@ -169,7 +169,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .batch-bar {
   display: flex; align-items: center; gap: 6px;
   padding: 8px 12px; border-radius: 14px;
-  position: sticky; top: 0; z-index: 10;
+  position: sticky; top: var(--ml-sticky-top, 58px); z-index: 10;
 }
 .batch-bar strong { font-size: 13px; white-space: nowrap; }
 .batch-sep { width: 1px; height: 20px; background: var(--ml-line-strong); margin: 0 4px; }

@@ -13,8 +13,15 @@ services:
       - PORT=8080
       - DATA_DIR=/app/data
       - TZ=${TZ:-Asia/Shanghai}
-      # 站内管理口令；留空=纯访客模式（只有音乐库能听，后台全关）
+      # 可选的额外管理口令；留空则只用内置固定口令（后台始终可用）
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # 站点身份 / 对外接口设置；留空时走 config.yaml 或内置默认值
+      - SITE_NAME=${SITE_NAME:-}
+      - SITE_TAGLINE=${SITE_TAGLINE:-}
+      - SITE_DESCRIPTION=${SITE_DESCRIPTION:-}
+      - SITE_BASE_URL=${SITE_BASE_URL:-}
+      - API_KEY_RATE_LIMIT=${API_KEY_RATE_LIMIT:-}
+      - API_ALLOW_ORIGINS=${API_ALLOW_ORIGINS:-}
     volumes:
       - ./data:/app/data
       # 如需自定义配置，取消下一行注释并准备 config.yaml

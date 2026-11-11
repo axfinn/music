@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -19,20 +20,19 @@ import (
 	"unicode"
 
 	"github.com/axfinn/music/backend/config"
-	"github.com/axfinn/music/backend/middleware"
 	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ── 音乐库(Music Library) ──
-// 面向个人的 AI 音乐收藏:上传本地音频 → 流式播放(Range)→ 元数据/歌词/封面/收藏/播放次数管理。
+// 上传本地音频 → 流式播放(Range)→ 元数据/歌词/封面/收藏/播放次数管理。
 // 音频与封面落盘 ./data/music(容器内 /app/data 命名卷,重建不丢),元数据落 SQLite music_tracks。
-// 播放/列表为公开只读;写入接口与全站个人工具保持一致(内网/个人使用,不加密码门)。
+// 列表/播放/收藏是公开只读;增删改由 routes 层的管理门保护。
 
 const (
-	musicMaxAudio     = 200 << 20 // 单曲上限 200MB
-	musicMaxCover     = 15 << 20  // 封面上限 15MB
+	musicMaxAudio     = 200 << 20 // 单曲默认上限（music.audio_max_bytes 可覆盖）
+	musicMaxCover     = 15 << 20  // 封面默认上限（music.cover_max_bytes 可覆盖）
 	musicMaxLyrics    = 128 << 10 // 歌词文本上限 128KB
 	musicMaxPageSize  = 2000      // /tracks 单页上限(精简载荷,可比旧的 500 放宽)
 	musicSnapshotCap  = 20000     // /snapshot 全量上限(防御性,超出由前端继续分页)
@@ -68,15 +68,14 @@ var musicImageTypes = map[string]string{
 
 type MusicHandler struct {
 	db    *models.DB
-	cfg   *config.Config // 仅用于对外 v1 接口的 CORS 白名单(lyrics.allow_origins)
+	cfg   *config.Config // 站点与对外接口设置（/ping 要报限流额度）
 	files *musicFileIndex
 
-	// 音频与封面落盘目录,由 config.DataDir 驱动。
+	// 音频与封面落盘目录,由 config.DataDir 驱动；上传上限由 config.Music 驱动。
 	musicFileDir  string
 	musicCoverDir string
-
-	// keyLimiter 对外 v1 接口按密钥限流(与歌词库对称)。
-	keyLimiter *middleware.RateLimiter
+	audioMaxBytes int64
+	coverMaxBytes int64
 
 	// rev 是「曲库数据版本」。任何写操作 +1,用于 snapshot 的条件请求:
 	// 数据没变时后端只回几十字节的 not_modified,不再重传整份曲库。
@@ -94,11 +93,18 @@ func NewMusicHandler(db *models.DB, cfg *config.Config) *MusicHandler {
 	fileDir := filepath.Join(cfg.DataDir, "music")
 	coverDir := filepath.Join(cfg.DataDir, "music/covers")
 	// 确保目录存在,避免首次上传因目录缺失而失败。
-	_ = os.MkdirAll(fileDir, 0o755)
-	_ = os.MkdirAll(coverDir, 0o755)
-	limit := cfg.Lyrics.APIKeyRateLimit
-	if limit <= 0 {
-		limit = 60
+	if err := os.MkdirAll(fileDir, 0o755); err != nil {
+		log.Printf("创建音频目录 %s 失败: %v", fileDir, err)
+	}
+	if err := os.MkdirAll(coverDir, 0o755); err != nil {
+		log.Printf("创建封面目录 %s 失败: %v", coverDir, err)
+	}
+	audioMax, coverMax := cfg.Music.AudioMaxBytes, cfg.Music.CoverMaxBytes
+	if audioMax <= 0 {
+		audioMax = musicMaxAudio
+	}
+	if coverMax <= 0 {
+		coverMax = musicMaxCover
 	}
 	return &MusicHandler{
 		db:            db,
@@ -106,7 +112,8 @@ func NewMusicHandler(db *models.DB, cfg *config.Config) *MusicHandler {
 		files:         &musicFileIndex{dir: fileDir},
 		musicFileDir:  fileDir,
 		musicCoverDir: coverDir,
-		keyLimiter:    middleware.NewRateLimiter(limit, time.Minute),
+		audioMaxBytes: audioMax,
+		coverMaxBytes: coverMax,
 	}
 }
 
@@ -231,8 +238,8 @@ func (h *MusicHandler) UploadTrack(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件字段 file"})
 		return
 	}
-	if fileHeader.Size > musicMaxAudio {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("文件超过 %dMB 上限", musicMaxAudio>>20)})
+	if fileHeader.Size > h.audioMaxBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("文件超过 %dMB 上限", h.audioMaxBytes>>20)})
 		return
 	}
 	ext := sanitizeExt(fileHeader.Filename)
@@ -305,8 +312,8 @@ func (h *MusicHandler) UploadCover(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少封面字段 cover"})
 		return
 	}
-	if fileHeader.Size > musicMaxCover {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "封面超过 15MB 上限"})
+	if fileHeader.Size > h.coverMaxBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("封面超过 %dMB 上限", h.coverMaxBytes>>20)})
 		return
 	}
 	ext := sanitizeExt(fileHeader.Filename)

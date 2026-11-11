@@ -84,3 +84,94 @@ func TestLegacyEnvFallback(t *testing.T) {
 		t.Fatalf("ADMIN_PASSWORD 应优先，实际 %q", cfg.Admin.Password)
 	}
 }
+
+// ── 站点身份与对外接口配置 ──
+// 独立站把 site / api 提到顶层，旧配置里写在 lyrics 段的值必须继续生效。
+
+func TestSiteDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Site.Name != DefaultSiteName || cfg.Site.BaseURL != DefaultSiteBaseURL {
+		t.Fatalf("站点默认值不对: %+v", cfg.Site)
+	}
+	if cfg.API.KeyRateLimit != DefaultAPIKeyRateLimit {
+		t.Fatalf("密钥限流默认值不对: %d", cfg.API.KeyRateLimit)
+	}
+}
+
+func TestSiteFromYAMLAndEnv(t *testing.T) {
+	path := writeTemp(t, "site:\n  name: 我的曲库\n  tagline: 私人电台\n  base_url: https://example.com\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Site.Name != "我的曲库" || cfg.Site.Tagline != "私人电台" {
+		t.Fatalf("站点 YAML 未生效: %+v", cfg.Site)
+	}
+	// 没写 description 时要保留默认值，而不是被零值覆盖。
+	if cfg.Site.Description != DefaultSiteDescription {
+		t.Fatalf("缺省项应保留默认值，实际 %q", cfg.Site.Description)
+	}
+	t.Setenv("SITE_NAME", "env-station")
+	t.Setenv("SITE_BASE_URL", "https://music.jaxiu.cn")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Site.Name != "env-station" || cfg.Site.BaseURL != "https://music.jaxiu.cn" {
+		t.Fatalf("环境变量应覆盖 YAML: %+v", cfg.Site)
+	}
+}
+
+func TestAPIConfigFromYAML(t *testing.T) {
+	path := writeTemp(t, "api:\n  key_rate_limit: 12\n  allow_origins: [\"https://music.jaxiu.cn\"]\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.API.KeyRateLimit != 12 || len(cfg.API.AllowOrigins) != 1 {
+		t.Fatalf("api 段未生效: %+v", cfg.API)
+	}
+}
+
+func TestLegacyAPIConfigMigrated(t *testing.T) {
+	path := writeTemp(t, "lyrics:\n  api_key_rate_limit: 17\n  allow_origins: [\"https://old.example.com\"]\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.API.KeyRateLimit != 17 {
+		t.Fatalf("旧 lyrics.api_key_rate_limit 应迁移，实际 %d", cfg.API.KeyRateLimit)
+	}
+	if len(cfg.API.AllowOrigins) != 1 || cfg.API.AllowOrigins[0] != "https://old.example.com" {
+		t.Fatalf("旧 lyrics.allow_origins 应迁移，实际 %v", cfg.API.AllowOrigins)
+	}
+}
+
+func TestNewAPIConfigBeatsLegacy(t *testing.T) {
+	path := writeTemp(t, "api:\n  key_rate_limit: 30\n  allow_origins: [\"https://new.example.com\"]\nlyrics:\n  api_key_rate_limit: 17\n  allow_origins: [\"https://old.example.com\"]\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.API.KeyRateLimit != 30 || cfg.API.AllowOrigins[0] != "https://new.example.com" {
+		t.Fatalf("顶层 api 应优先于旧配置: %+v", cfg.API)
+	}
+}
+
+func TestAPIConfigFromEnv(t *testing.T) {
+	t.Setenv("API_KEY_RATE_LIMIT", "9")
+	t.Setenv("API_ALLOW_ORIGINS", "https://a.example.com, https://b.example.com")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.API.KeyRateLimit != 9 || len(cfg.API.AllowOrigins) != 2 {
+		t.Fatalf("API 环境变量未生效: %+v", cfg.API)
+	}
+	if cfg.API.AllowOrigins[1] != "https://b.example.com" {
+		t.Fatalf("逗号分隔的 origin 应去掉空格: %v", cfg.API.AllowOrigins)
+	}
+}

@@ -8,7 +8,7 @@ const { section, keyword, sortBy, viewMode, displayCount, selected, effectiveFav
 const { selectionMode, toggleSelectionMode } = ui
 
 const titles = {
-  discover: '发现音乐', all: '全部曲目', favorites: '我喜欢的',
+  discover: '曲库首页', all: '全部曲目', favorites: '我喜欢的',
   recent: '最近添加', albums: '专辑', artists: '歌手',
 }
 const title = computed(() => titles[section.value] || '音乐库')
@@ -99,7 +99,7 @@ const showGridToggle = computed(() => isBrowse.value)
 <style scoped>
 .topbar {
   position: sticky;
-  top: 0;
+  top: var(--ml-sticky-top, 58px);
   z-index: 12;
   display: flex;
   flex-direction: column;

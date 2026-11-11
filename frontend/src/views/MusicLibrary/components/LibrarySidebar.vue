@@ -12,7 +12,9 @@ const { section, insights, loading } = store
 const { linkBusy } = lyrics
 
 const browse = [
-  { key: 'discover', label: '发现', icon: House },
+  // section key 沿用 'discover'，避免让已保存的偏好失效；
+  // 但 UI 上叫「曲库首页」，和后台的「歌词发现」区分开。
+  { key: 'discover', label: '曲库首页', icon: House },
   { key: 'all', label: '全部曲目', icon: Headset },
   { key: 'recent', label: '最近添加', icon: Clock },
 ]
@@ -123,13 +125,14 @@ const statsRows = computed(() => [
 <style scoped>
 .sidebar {
   position: sticky;
-  top: 0;
+  /* 顶栏是 sticky 且 48px 高，sticky 侧栏必须避开它，否则滚动时上沿被压住 */
+  top: var(--ml-sticky-top, 58px);
   align-self: start;
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding: 20px 16px 16px;
-  max-height: calc(100dvh - 32px - var(--player-bar-h, 0px));
+  max-height: calc(100dvh - var(--app-bar-h, 48px) - 32px - var(--player-bar-h, 0px));
   overflow-y: auto;
   scrollbar-width: thin;
 }

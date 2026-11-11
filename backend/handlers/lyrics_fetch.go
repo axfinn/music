@@ -118,7 +118,7 @@ func (f *LyricsFetcher) resolve() (string, string, error) {
 
 	python := f.pythonBin
 	if python == "" {
-		python = os.Getenv("DEVTOOLS_LYRICS_PYTHON")
+		python = firstEnv("MUSIC_LYRICS_PYTHON", "DEVTOOLS_LYRICS_PYTHON")
 	}
 	if python == "" {
 		for _, candidate := range []string{"python3", "python"} {
@@ -129,7 +129,7 @@ func (f *LyricsFetcher) resolve() (string, string, error) {
 		}
 	}
 	if python == "" {
-		for _, candidate := range []string{"/app/uv-venv/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"} {
+		for _, candidate := range []string{"/usr/local/bin/python3", "/usr/bin/python3"} {
 			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 				python = candidate
 				break
@@ -142,7 +142,7 @@ func (f *LyricsFetcher) resolve() (string, string, error) {
 
 	script := f.scriptPath
 	if script == "" {
-		script = os.Getenv("DEVTOOLS_LYRICS_FINDER")
+		script = firstEnv("MUSIC_LYRICS_SCRIPT", "DEVTOOLS_LYRICS_FINDER")
 	}
 	if script == "" {
 		script = discoverLyricScript()
@@ -156,6 +156,17 @@ func (f *LyricsFetcher) resolve() (string, string, error) {
 
 	f.pythonBin, f.scriptPath, f.resolved = python, script, true
 	return python, script, nil
+}
+
+// firstEnv 取第一个非空环境变量。旧名（DEVTOOLS_*）保留一个版本作为升级兼容，
+// 新部署用 MUSIC_*，也可以在 config.yaml 里显式写 lyrics.python_bin / lyrics.script_path。
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // discoverLyricScript 依次在「当前工作目录 / 可执行文件目录 / 源码目录」找脚本，兼容容器与本地跑。

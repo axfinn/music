@@ -76,14 +76,13 @@ func RegisterLyricsRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, creat
 
 // RegisterLyricsAPIRoutes 对外接口 /api/v1/lyrics/*。
 // 与站内接口刻意分开：站内是"自己用"，这里是"给别的系统用"，签名/限流/返回信封都不同。
-// 注意：/ping 是公开自检接口（无需密钥，便于外部探活），单独挂在只带 CORS 的组下；
-// 其余接口全部走 API Key 鉴权 —— 这条线与「站内管理身份」无关，
-// 外部系统用密钥调用，不受后台开关影响。
-func RegisterLyricsAPIRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler) {
-	pub := api.Group("/v1/lyrics", h.V1CORS())
+// apiV1 与音乐库 v1 共用同一实例；/ping 走可选鉴权（不带密钥探活，带了就报用量），
+// 其余接口全部强制鉴权 —— 这条线与「站内管理身份」无关，不受后台开关影响。
+func RegisterLyricsAPIRoutes(api *gin.RouterGroup, h *handlers.LyricsHandler, apiV1 *middleware.V1API) {
+	pub := api.Group("/v1/lyrics", apiV1.CORS(), apiV1.OptionalKey())
 	pub.GET("/ping", h.V1Ping)
 
-	v1 := api.Group("/v1/lyrics", h.V1CORS(), h.APIKeyAuth())
+	v1 := api.Group("/v1/lyrics", apiV1.CORS(), apiV1.RequireKey())
 	{
 		// 浏览器的预检请求不带密钥，必须在鉴权之前就地返回。
 		// Gin 只有命中路由才会跑组中间件，所以这里补一条 OPTIONS 兜底。

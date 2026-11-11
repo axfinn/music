@@ -1,53 +1,26 @@
 /**
- * 音乐库 API 客户端 —— 全站唯一的网络出入口。
+ * 音乐库 API —— 在全站统一请求层之上只做 URL 拼装与响应塑形。
  *
- * 后端契约（backend/routes/musiclib.go）保持不变，这里只负责：
- *   - 统一错误归一化（后端成功响应无 code 字段，错误统一 { error }）
- *   - URL 拼装，尤其是封面 URL 的版本号（后端 /cover/:id 缓存 24h 且 URL 固定，
+ * 后端契约见 backend/routes/music.go。这里负责：
+ *   - 给所有端点固定 /api/music 前缀，上层 composable 不碰 fetch
+ *   - 封面 URL 的版本号（后端 /cover/:id 缓存 24h 且 URL 固定，
  *     换封面后必须靠 ?v=<cover_filename> 破缓存）
- *   - 让上层 composable 完全不碰 fetch，方便单测与替换
+ *   - 把后端响应裁成上层需要的形态
+ *
+ * 错误归一化、Cookie 携带、状态码文案都在 src/api/client.js，别在这里重写。
  */
+import { request as http, json } from '../../api/client.js'
 
 const API = '/api/music'
-
-/** 统一请求；失败抛 Error，附带 status / missing 供上层做差异化提示 */
-async function request(path, { method = 'GET', body, headers, signal } = {}) {
-  let res
-  try {
-    // 管理员会话是 Cookie（HttpOnly），要显式带上才会随请求发送。
-    res = await fetch(`${API}${path}`, { method, body, headers, signal, credentials: 'same-origin' })
-  } catch (e) {
-    if (e?.name === 'AbortError') throw e
-    throw new Error('网络连接异常，请稍后重试')
-  }
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const fallback = {
-      400: '请求参数有误',
-      404: '资源不存在',
-      413: '文件超过大小限制',
-      429: '操作太频繁，请稍后再试',
-      500: '服务器开小差了',
-    }[res.status] || `请求失败 (${res.status})`
-    const err = new Error(data.error || fallback)
-    err.status = res.status
-    err.missing = !!data.missing
-    throw err
-  }
-  return data
-}
-
-const json = (payload, method = 'POST') => ({
-  method,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(payload),
-})
+const request = (path, options) => http(`${API}${path}`, options)
 
 export const AUDIO_EXT = [
   '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.oga',
   '.opus', '.webm', '.wma', '.aiff', '.aif', '.ape',
 ]
 export const AUDIO_ACCEPT = AUDIO_EXT.join(',')
+// 前端提前校验用的默认值，与后端 music.audio_max_bytes / cover_max_bytes 默认一致。
+// 后端才是唯一裁判：调小配置只会让后端更早拒绝，放宽配置时需同步改这里。
 export const MAX_AUDIO_BYTES = 200 * 1024 * 1024
 export const MAX_COVER_BYTES = 15 * 1024 * 1024
 export const COVER_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']
@@ -149,8 +122,6 @@ export const musicApi = {
   autoMatchOne: id => request(`/tracks/${encodeURIComponent(id)}/lyrics/auto`, { method: 'POST' }),
 
   autoMatchAll: () => request('/lyrics/auto-match', { method: 'POST' }),
-
-  repair: () => request('/maintenance/repair', { method: 'POST' }),
 
   /**
    * 这首歌的歌词（公开只读）。

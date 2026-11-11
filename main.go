@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ func main() {
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "music"})
 		})
+		// 站点身份：前端用它渲染品牌/标题，外部系统用它发现接口地址。
+		routes.RegisterSiteRoutes(api, cfg)
 
 		// 管理员身份:口令换算成会话 Cookie。
 		// 留空 = 纯访客模式(只有音乐库可听,后台接口全关)。
@@ -52,6 +55,22 @@ func main() {
 		// 后台登录/登出/会话查询。
 		routes.RegisterAdminRoutes(api, handlers.NewAdminHandler(admin))
 
+		// 对外 v1 公共设施：音乐与歌词两套 v1 共用同一把密钥、CORS 与限流。
+		// 密钥表仍叫 lyric_api_keys（历史表名，不动生产库），但语义已是全站密钥。
+		apiV1 := middleware.NewV1API(middleware.V1APIOptions{
+			AllowOrigins: cfg.API.AllowOrigins,
+			KeyRateLimit: cfg.API.KeyRateLimit,
+			Verify: func(raw string) (middleware.APIKeyInfo, error) {
+				key, err := db.VerifyAPIKey(raw)
+				if err != nil {
+					return middleware.APIKeyInfo{}, err
+				}
+				return middleware.APIKeyInfo{
+					ID: key.ID, Name: key.Name, Prefix: key.Prefix, CallCount: key.CallCount,
+				}, nil
+			},
+		})
+
 		// 音乐库路由(上传/封面走独立限流:200 次/分钟)。
 		musicHandler := handlers.NewMusicHandler(db, cfg)
 		routes.RegisterMusicRoutes(api, musicHandler, middleware.NewRateLimiter(200, time.Minute), admin)
@@ -59,10 +78,10 @@ func main() {
 		// 歌词库路由(创建/摘句等写操作单独限流:60 次/分钟)。
 		lyricsHandler := handlers.NewLyricsHandler(db, cfg)
 		routes.RegisterLyricsRoutes(api, lyricsHandler, middleware.NewRateLimiter(60, time.Minute), admin)
-		routes.RegisterLyricsAPIRoutes(api, lyricsHandler)
+		routes.RegisterLyricsAPIRoutes(api, lyricsHandler, apiV1)
 
 		// 音乐库对外对称接口(/api/v1/music)。站内 /api/music 不变。
-		routes.RegisterMusicAPIRoutes(api, musicHandler)
+		routes.RegisterMusicAPIRoutes(api, musicHandler, apiV1)
 	}
 
 	// ── 静态前端 + SPA 回落 ──
@@ -78,7 +97,7 @@ func main() {
 		r.NoRoute(devPlaceholder())
 	}
 
-	addr := cfg.Server.Host + ":" + itoa(cfg.Server.Port)
+	addr := cfg.Server.Host + ":" + strconv.Itoa(cfg.Server.Port)
 	log.Printf("music 监听 %s (data=%s)", addr, cfg.DataDir)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
@@ -92,6 +111,12 @@ func spaFallback(dist string) gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
+		// SPA 入口与根目录静态文件（favicon.svg 等）都没有内容哈希。
+		// 不给 Cache-Control 时，外层 CDN 会按默认规则缓存住旧 index.html，
+		// 发完新版用户仍看到旧前端；旧版把 /favicon.svg 回落成的 HTML 也会被一直缓存。
+		// no-cache = 可以缓存但每次必须回源验证，配合 Last-Modified 命中 304，
+		// 既不会让发布卡在旧缓存，也不会每次都传整个文件。
+		c.Header("Cache-Control", "no-cache")
 		target := filepath.Join(dist, c.Request.URL.Path)
 		if info, err := os.Stat(target); err == nil && !info.IsDir() {
 			c.File(target)
@@ -120,7 +145,7 @@ const devPlaceholderHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>音乐库 · 前端尚未构建</title>
+<title>music · 前端尚未构建</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
@@ -157,25 +182,3 @@ const devPlaceholderHTML = `<!DOCTYPE html>
   </div>
 </body>
 </html>`
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [12]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
-}

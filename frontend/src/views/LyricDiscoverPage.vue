@@ -11,6 +11,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAdmin } from '../composables/useAdmin.js'
+import { request, json } from '../api/client.js'
 
 const { enabled } = useAdmin()
 
@@ -33,16 +34,8 @@ const KIND_LABEL = {
   online: '在线候选',
 }
 
-async function api(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
-  return data
-}
+// 错误文案与 Cookie 携带统一交给 src/api/client.js。
+const api = request
 
 async function loadFeed() {
   loading.value = true
@@ -92,15 +85,12 @@ async function saveOnline(item) {
   if (!item) return
   savingId.value = item.song
   try {
-    const res = await api('/api/discovery/save', {
-      method: 'POST',
-      body: JSON.stringify({
-        song: item.song,
-        artist: item.singer,
-        lyrics: item.lyrics || '',
-        source: item.engine || '在线发现',
-      }),
-    })
+    const res = await api('/api/discovery/save', json({
+      song: item.song,
+      artist: item.singer,
+      lyrics: item.lyrics || '',
+      source: item.engine || '在线发现',
+    }))
     if (res.duplicate) {
       ElMessage.info(`库里已经有《${item.song}》了`)
     } else {
@@ -499,5 +489,19 @@ onMounted(() => {
 
 .dc-warn {
   color: #ffc46b;
+}
+
+/* 后台页原本按桌面写，窄屏下补齐：单列卡片、统计两列、按钮组换行 */
+@media (max-width: 768px) {
+  .dc { padding: 18px 12px calc(40px + env(safe-area-inset-bottom, 0px)); }
+  .dc-head { gap: 12px; }
+  .dc-title { font-size: 22px; }
+  .dc-head-actions, .dc-online-actions, .dc-card-actions { flex-wrap: wrap; }
+  .dc-stats { gap: 8px; }
+  .dc-stat { flex: 1 1 calc(50% - 8px); padding: 10px 12px; }
+  .dc-pool { flex-basis: 100%; flex-wrap: wrap; }
+  .dc-grid { grid-template-columns: 1fr; }
+  .dc-online-text { font-size: 11.5px; max-height: 160px; }
+  .dc-online { padding: 12px; }
 }
 </style>

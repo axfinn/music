@@ -1,8 +1,9 @@
 // Package models 提供 SQLite 连接底座与音乐/歌词模块的表初始化注册机制。
 //
-// 与 devtools 的 models 包保持相同的 RegisterInit / InitAll 设计，但：
-//   - 驱动换成 modernc.org/sqlite（纯 Go，免 CGO，跨平台二进制一行编译）；
-//   - 不再使用 mattn 的 _parse_time=true，改用自定义 TS 时间戳类型解析 SQLite 文本时间。
+// 用 RegisterInit / InitAll 让各模块在建表阶段自行注册，避免一个中心文件
+// 里堆满 CREATE TABLE。两个刻意的选型：
+//   - 驱动用 modernc.org/sqlite（纯 Go，免 CGO，跨平台二进制一行编译）；
+//   - 不依赖驱动的 parse_time，改用自定义 TS 时间戳类型兼容历史库里的多种文本格式。
 package models
 
 import (
@@ -91,7 +92,7 @@ const tsLayout = "2006-01-02 15:04:05"
 // 历史数据里的时间有四种写法，都得认：
 //
 //	"2026-11-10 15:30:06"                       本项目写入的规范格式
-//	"2026-11-10 15:30:06.560582875+08:00"       devtools 原始文本
+//	"2026-11-10 15:30:06.560582875+08:00"       旧系统迁移过来的原始文本
 //	"2026-11-10 15:30:06.560582875 +0800 +0800" Go time.String() 的时区重复写法
 //	"2026-11-10T15:30:06Z" / "2026-11-05"       RFC3339 / 纯日期
 //

@@ -262,6 +262,7 @@
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMediaPlayer } from '../composables/useMediaPlayer.js'
+import { request } from '../api/client.js'
 import { parseLyrics, detectMode, findActiveIndex } from '../utils/lrc.js'
 import { createAudioDrive } from './MusicVisualizer/drive.js'
 import { createVisualEngine } from './MusicVisualizer/engine.js'
@@ -353,9 +354,7 @@ async function loadLyrics(id) {
     return
   }
   try {
-    const res = await fetch(`/api/music/tracks/${id}`)
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
+    const data = await request(`/api/music/tracks/${id}`)
     const text = data.item?.lyrics || ''
     lyricCache.set(id, text)
     if (track.value?.id === id) applyLyrics(text)
@@ -624,12 +623,12 @@ async function playRandom() {
   bumpUi() // 手势内唤醒 AudioContext,免得异步拉歌后整首静音
   randoming.value = true
   try {
-    const first = await fetch('/api/music/tracks?limit=1&offset=0').then(r => r.json())
+    const first = await request('/api/music/tracks?limit=1&offset=0')
     const total = Number(first.total || 0)
     if (!total) return
     const limit = 50
     const offset = Math.min(Math.floor(Math.random() * total), Math.max(0, total - limit))
-    const data = await fetch(`/api/music/tracks?limit=${limit}&offset=${offset}`).then(r => r.json())
+    const data = await request(`/api/music/tracks?limit=${limit}&offset=${offset}`)
     const items = (data.items || []).filter(t => t.id && t.playable !== false).map(mapTrack)
     if (!items.length) return
     player.playAll(items, Math.floor(Math.random() * items.length))

@@ -7,8 +7,10 @@
 
 :root {
   /* 顶部导航条高度。页面用 100dvh 铺满时需要减掉它，
-     所以做成变量，由各页面自己引用（见 MusicLibrary/theme.css）。 */
+     所以做成变量，由各页面自己引用（见 MusicLibrary/theme.css）。
+     sticky 元素也要避开这条常驻顶栏，否则滚动时会被它压住。 */
   --app-bar-h: 48px;
+  --ml-sticky-top: calc(var(--app-bar-h, 48px) + 10px);
 }
 
 *,
@@ -20,12 +22,17 @@
 html,
 body,
 #app {
-  height: 100%;
+  /* 用 min-height 而非 height：页面内容超过一屏时由 body 自然滚动，
+     不会被固定高度的 #app 裁掉（移动端手指滑动全靠这个）。 */
+  min-height: 100%;
   margin: 0;
   padding: 0;
 }
 
 body {
+  min-height: 100dvh;
+  /* iOS 横屏/旋屏时不要自动放大字号，否则窄屏布局会被撑破。 */
+  -webkit-text-size-adjust: 100%;
   /* 与音乐库 theme.css 的 .dark 底色一致，避免切换页面时闪白。 */
   background: #0b0d12;
   color: #e8eaf0;

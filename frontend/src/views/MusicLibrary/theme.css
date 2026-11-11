@@ -257,7 +257,7 @@
 
 /* ── Element Plus 控件 ──
    dialog / drawer / popover / dropdown 会 Teleport 到 body，所以覆盖规则
-   用 ml-dialog / ml-drawer / ml-pop 这些独有类名，不影响站里其他工具页。 */
+   用 ml-dialog / ml-drawer / ml-pop 这些独有类名，不影响曲库之外的页面。 */
 .ml-app .el-input__wrapper,
 .ml-app .el-select__wrapper,
 .ml-app .el-textarea__inner,
@@ -327,6 +327,9 @@ html.ml-drawer-open .pet-root {
   .ml-glow-b { width: 320px; height: 320px; }
   /* 抽屉是按 460px 设计的，窄屏会被裁掉左边一截，这里改成整屏 */
   .ml-drawer { width: 100vw !important; }
+  /* Element 弹窗默认 50% 宽，手机上只有一百多像素；改成近全宽 */
+  .ml-dialog { width: calc(100vw - 24px) !important; max-width: none !important; }
+  .ml-dialog .el-dialog__body { padding-left: 14px; padding-right: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

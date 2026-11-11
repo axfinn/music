@@ -3,8 +3,8 @@
 """
 lyrics_finder.py —— 通过百度搜索结果抓取歌曲歌词（纯标准库，无第三方依赖）
 
-来源：WorkBuddy 资料库 / lyrics_finder.py，由 devtools 后端内置（backend/tools/lyricfetch）。
-改动仅有两处（均向后兼容）：
+随本项目独立分发（纯标准库）；后端 backend/handlers/lyrics_fetch.go 会调用它。
+相对上游脚本的改动仅有两处（均向后兼容）：
   1) 批量模式支持 --json，输出 {"items": [...]} 结构，便于后端解析
   2) 新增 --delay，控制批量模式下每首之间的间隔（默认 1.0 秒）
 

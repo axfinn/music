@@ -26,12 +26,17 @@ cd frontend && npm install && npm run dev
 ## 提交前检查
 
 ```bash
-go build ./...
+gofmt -w main.go backend cmd
 go vet ./...
-cd frontend && npm run build
+go test ./...
+
+cd frontend
+npx vitest run
+npm run build
 ```
 
 仓库没有引入 lint 工具链，请在 PR 里说明你改了什么、为什么。
+CI 会跑上面同一套检查（外加 Docker 构建）。
 
 ## 代码约定
 
@@ -43,12 +48,22 @@ cd frontend && npm run build
   不要直接用 `time.Time` 扫 SQLite 文本时间。
 - 站内接口与 `/api/v1/*` 对外接口**保持隔离**：对外接口用 `v1OK` / `v1Fail` 信封，
   站内接口直接返回业务对象。不要把两套混着写。
-- 对外接口新增端点时，同步更新 `docs/api.md`。
+- 对外接口的 CORS、密钥鉴权、限流与信封统一在 `backend/middleware/v1api.go`
+  （`V1API` 实例由 `main.go` 构造，音乐与歌词两个路由组共用）。
+  **新增 v1 端点不要另起一套鉴权**，在对应路由组里挂 handler 即可。
+- 站点身份（站名 / 标语 / 域名）从 `config.Site` 读，不要硬编码 `music.jaxiu.cn`。
+- 对外接口新增端点时，同步更新 `docs/api.md` 与「歌词库 → 接口」页的端点列表。
 
 **前端（Vue 3）**
 
 - 一律用 `<script setup>` 写 `.vue` SFC，**不要**用 `defineComponent({ template })` —— 运行时构建不支持。
-- 设计系统用 `frontend/src/styles/theme.css` 里的 `--ml-*` 变量，**不要**引入宿主应用的全局样式。
+- 路由页统一叫 `*Page.vue`（如 `MusicLibraryPage.vue`）；曲库内部的组件、composable
+  放在 `src/views/MusicLibrary/` 下，用 `context.js` 的 provide/inject 拿页面状态。
+- **所有网络请求走 `src/api/client.js`**，不要再写裸 `fetch` 或自建请求封装：
+  Cookie 携带、错误归一化、状态码文案都在那里。
+- 站点身份从 `src/site.js` 读（`siteInfo()` / `siteAlbum()`），别把站名写死在组件里。
+- 曲库的设计变量在 `frontend/src/views/MusicLibrary/theme.css`，以 `.ml-app` / `ml-*`
+  独有类名限定作用域，不要污染其他页面。
 - 新状态变量放在 `<script setup>` 末尾，避免 TDZ 导致白屏。
 - `el-form` 里的 `<button>` 必须写 `type="button"`，否则会误提交表单。
 

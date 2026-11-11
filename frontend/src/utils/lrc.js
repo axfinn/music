@@ -1,6 +1,6 @@
 // LRC 解析与同步算法(纯函数)。
-// 同时被 MusicLyricsPlayer.vue(组件运行时)与 MusicLibraryTool.vue(歌词抽屉/Now Playing)复用,
-// 从 .vue 文件里抽出来,避免跨文件 import <script> 导出的脆弱写法,也方便单独测试。
+// 同时被曲库页的歌词抽屉 / Now Playing（useMusicLyrics.js）与沉浸播放页复用，
+// 从 .vue 文件里抽出来，避免跨文件 import <script> 导出的脆弱写法，也方便单独测试。
 
 const LRC_TAG = /^\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]\s*/
 const LRC_META = /^\[(ti|ar|al|by|offset|length):.*\]$/i

@@ -161,4 +161,11 @@ async function submit() {
 .login-back:hover {
   color: #a9b2c2;
 }
+
+@media (max-width: 768px) {
+  /* 手机键盘弹起时视口变矮，卡片靠上放，避免输入框被顶到屏幕外 */
+  .login { place-items: start center; padding: 16px; }
+  .login-card { padding: 22px 18px; gap: 12px; }
+  .login-title { font-size: 20px; }
+}
 </style>

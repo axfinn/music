@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/axfinn/music/backend/middleware"
 	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
@@ -16,14 +17,7 @@ import (
 // 站内(/api/lyrics/fetch*)沿用项目里 `{"item": ...}` 的朴素返回；
 // 对外(/api/v1/lyrics/*)统一 `{"ok": bool, "data": ..., "meta": ...}`，
 // 因为外系统按这个信封写解析更省事，失败时 `error` 一定有值。
-
-const lyricAPIKeyCtx = "lyric_api_key"
-
-// AttachFetcher 注入抓取器；不注入则相关接口返回"组件不可用"而不 panic。
-func (h *LyricsHandler) AttachFetcher(f *LyricsFetcher) *LyricsHandler {
-	h.fetcher = f
-	return h
-}
+// 信封、密钥鉴权与 CORS 都在 middleware.V1API，这里只管业务。
 
 // ── 站内：抓取 ──
 
@@ -276,7 +270,12 @@ func (h *LyricsHandler) ListAPIKeys(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": keys, "base_url": "/api/v1/lyrics"})
+	// 同一把密钥同时能调音乐与歌词两套 v1 接口，列表页要把两个 base 都给出。
+	c.JSON(http.StatusOK, gin.H{
+		"items":     keys,
+		"base_url":  "/api/v1/lyrics", // 兼容旧前端
+		"base_urls": gin.H{"lyrics": "/api/v1/lyrics", "music": "/api/v1/music"},
+	})
 }
 
 // CreateAPIKey POST /api/lyrics/api-keys — 明文只在这里返回一次。
@@ -326,92 +325,18 @@ func (h *LyricsHandler) DeleteAPIKey(c *gin.Context) {
 }
 
 // ── 对外 /api/v1/lyrics ──
+// 鉴权 / CORS / 响应信封统一在 middleware.V1API（见 routes.RegisterLyricsAPIRoutes），
+// 音乐库 v1 用同一个实例，所以两边不会再各写一套。
 
-// APIKeyAuth 对外接口的密钥门。支持 `X-API-Key` 与 `Authorization: Bearer`。
-// 限流按密钥计数（同一把 key 多台机器共用也共享额度）。
-func (h *LyricsHandler) APIKeyAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		raw := extractLyricAPIKey(c)
-		if raw == "" {
-			v1Fail(c, http.StatusUnauthorized, "缺少密钥：请用 X-API-Key 或 Authorization: Bearer <key>")
-			return
-		}
-		key, err := h.db.VerifyLyricAPIKey(raw)
-		if err != nil {
-			v1Fail(c, http.StatusUnauthorized, "密钥无效或已撤销")
-			return
-		}
-		if h.keyLimiter != nil && !h.keyLimiter.Allow(key.ID) {
-			v1Fail(c, http.StatusTooManyRequests, "该密钥请求过于频繁，请稍后再试")
-			return
-		}
-		c.Set(lyricAPIKeyCtx, key)
-		c.Next()
-	}
-}
-
-func extractLyricAPIKey(c *gin.Context) string {
-	if v := strings.TrimSpace(c.GetHeader("X-API-Key")); v != "" {
-		return v
-	}
-	auth := strings.TrimSpace(c.GetHeader("Authorization"))
-	if len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") {
-		return strings.TrimSpace(auth[7:])
-	}
-	return strings.TrimSpace(c.Query("api_key"))
-}
-
-func v1OK(c *gin.Context, data interface{}, meta gin.H) {
-	body := gin.H{"ok": true, "data": data}
-	if meta != nil {
-		body["meta"] = meta
-	}
-	c.JSON(http.StatusOK, body)
-}
-
-func v1Fail(c *gin.Context, code int, msg string) {
-	c.AbortWithStatusJSON(code, gin.H{"ok": false, "error": msg, "code": code})
-}
-
-// V1CORS 对外接口的跨域放行：凭据是密钥而不是 Cookie，所以默认放开来源。
-// 配置 lyrics.allow_origins 可收紧白名单。
-func (h *LyricsHandler) V1CORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		allowed := "*"
-		if list := h.cfg.Lyrics.AllowOrigins; len(list) > 0 {
-			allowed = ""
-			for _, o := range list {
-				if strings.EqualFold(strings.TrimSpace(o), origin) || strings.TrimSpace(o) == "*" {
-					allowed = origin
-					break
-				}
-			}
-		}
-		if allowed != "" {
-			c.Header("Access-Control-Allow-Origin", allowed)
-			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization")
-			c.Header("Access-Control-Max-Age", "86400")
-		}
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	}
-}
-
-// V1Ping GET /api/v1/lyrics/ping — 鉴权自检，同时看到这把 key 的用量。
+// V1Ping GET /api/v1/lyrics/ping — 公开自检；带合法密钥时附带这把 key 的用量。
+// 可选鉴权由 middleware.V1API.OptionalKey 完成：不带密钥照样探活，带了就必须有效。
 func (h *LyricsHandler) V1Ping(c *gin.Context) {
-	key, _ := c.Get(lyricAPIKeyCtx)
 	info := gin.H{"ready": h.fetcher != nil && h.fetcher.Ready()}
-	if k, ok := key.(*models.LyricAPIKey); ok && k != nil {
-		info["key_name"] = k.Name
-		info["key_prefix"] = k.Prefix
-		info["call_count"] = k.CallCount
-		info["rate_limit_per_minute"] = h.cfg.Lyrics.APIKeyRateLimit
+	if key, ok := middleware.APIKeyFromContext(c); ok {
+		info["key_name"] = key.Name
+		info["key_prefix"] = key.Prefix
+		info["call_count"] = key.CallCount
+		info["rate_limit_per_minute"] = h.cfg.API.KeyRateLimit
 	}
 	v1OK(c, info, nil)
 }

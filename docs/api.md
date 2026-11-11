@@ -8,12 +8,14 @@
 两套接口刻意分开：**签名、限流、返回信封都不同**，避免"站内随便调"的习惯泄漏到对外契约里。
 
 在线站点：<https://music.jaxiu.cn>
+站点信息：`GET /api/site`（公开，见[站点信息](#站点信息)）
 
 ---
 
 ## 目录
 
 - [通用约定](#通用约定)
+- [站点信息](#站点信息)
 - [鉴权](#鉴权)
 - [管理员会话](#管理员会话)
 - [密钥管理](#密钥管理)
@@ -76,13 +78,40 @@
 对外接口默认放开任意来源（凭据是密钥而非 Cookie，无 CSRF 风险）。要收紧就在配置里设白名单：
 
 ```yaml
-lyrics:
-  allow_origins: ["https://example.com", "https://app.example.com"]
+api:
+  allow_origins: ["https://music.jaxiu.cn", "https://app.example.com"]
 ```
 
 带 `Origin` 的请求会回 `Access-Control-Allow-Origin`；白名单外的来源不会回该头，浏览器即拦截。
+旧写法 `lyrics.allow_origins` 仍会自动迁移，但新配置请写 `api.allow_origins`。
 
 预检请求（`OPTIONS`）在鉴权**之前**就地返回 `204`，不会因为没带密钥而失败。
+
+---
+
+## 站点信息
+
+`GET /api/site` — 公开，无需鉴权。前端用它渲染站名、标语与分享卡片，
+外部系统用它发现各套接口地址。
+
+```json
+{
+  "name": "music",
+  "tagline": "独立音乐站",
+  "description": "私人曲库与歌词档案：上传、流式播放、行级歌词检索与发现流。",
+  "base_url": "https://music.jaxiu.cn",
+  "admin_enabled": true,
+  "api": {
+    "music": "/api/music",
+    "lyrics": "/api/lyrics",
+    "v1_music": "/api/v1/music",
+    "v1_lyrics": "/api/v1/lyrics"
+  }
+}
+```
+
+值来自 `config.yaml` 的 `site` 段，或 `SITE_NAME` / `SITE_TAGLINE` / `SITE_DESCRIPTION` /
+`SITE_BASE_URL` 环境变量。改站名或域名不需要重新构建前端。
 
 ---
 
@@ -106,12 +135,15 @@ GET /api/v1/lyrics/songs?api_key=lly_xxxxxxxx
 
 ### 限流
 
-按**密钥**计数，同一把 key 被多台机器共用时共享同一份额度。默认 60 次/分钟，可在配置里调整：
+按**密钥 ID** 计数，单实例内同一把 key 共享一份额度（进程内滑动窗口；
+多实例部署时各实例分别计数，不共享额度）。默认 60 次/分钟：
 
 ```yaml
-lyrics:
-  api_key_rate_limit: 60
+api:
+  key_rate_limit: 60
 ```
+
+旧写法 `lyrics.api_key_rate_limit` 仍会自动迁移。环境变量 `API_KEY_RATE_LIMIT` 优先级最高。
 
 超限返回 `429`：
 
@@ -121,10 +153,13 @@ lyrics:
 
 ### 公开自检接口
 
-`/api/v1/lyrics/ping` 与 `/api/v1/music/ping` **不需要密钥**（只挂 CORS），方便外部探活。
+`/api/v1/lyrics/ping` 与 `/api/v1/music/ping` 都是**可选鉴权**：不带密钥可直接探活，
+方便外部系统做健康检查；带密钥时则顺带返回这把 key 的用量。
 
-> 歌词库的 `/ping` 返回当前密钥的用量信息（`key_name` / `call_count` / `rate_limit_per_minute`），
-> 所以它**只在带了密钥时**才带这些字段；音乐库的 `/ping` 始终返回 `{"ready": true}`。
+> 两套 `/ping` 字段一致：不带密钥只有 `ready`，带了合法密钥才追加
+> `key_name` / `key_prefix` / `call_count` / `rate_limit_per_minute`。
+> 带了密钥但无效会返回 401，不会静默当作匿名请求。
+> `ready` 在音乐侧恒为 `true`，在歌词侧表示歌词抓取组件是否就绪。
 
 ---
 
@@ -173,7 +208,7 @@ GET /api/lyrics/api-keys
   "items": [
     {
       "id": "lak_a1b2c3d4e5f6",
-      "name": "devtools",
+      "name": "博客脚本",
       "prefix": "lly_1a2b",
       "enabled": true,
       "call_count": 128,
@@ -181,10 +216,12 @@ GET /api/lyrics/api-keys
       "last_used_at": "2026-11-10T09:12:33+08:00"
     }
   ],
-  "base_url": "/api/v1/lyrics"
+  "base_url": "/api/v1/lyrics",
+  "base_urls": { "lyrics": "/api/v1/lyrics", "music": "/api/v1/music" }
 }
 ```
 
+同一把密钥同时能调音乐与歌词两套 v1，所以 `base_urls` 把两个基地址都给出。
 `prefix` 只是密钥前 8 位，用于辨认，**不构成凭据**。
 
 ### 签发密钥
@@ -193,12 +230,12 @@ GET /api/lyrics/api-keys
 POST /api/lyrics/api-keys
 Content-Type: application/json
 
-{ "name": "devtools" }
+{ "name": "博客脚本" }
 ```
 
 ```json
 {
-  "item": { "id": "lak_...", "name": "devtools", "prefix": "lly_1a2b", "enabled": true, "call_count": 0 },
+  "item": { "id": "lak_...", "name": "博客脚本", "prefix": "lly_1a2b", "enabled": true, "call_count": 0 },
   "plain": "lly_1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4"
 }
 ```
@@ -238,7 +275,7 @@ DELETE /api/lyrics/api-keys/:id
   "ok": true,
   "data": {
     "ready": true,
-    "key_name": "devtools",
+    "key_name": "博客脚本",
     "key_prefix": "lly_1a2b",
     "call_count": 128,
     "rate_limit_per_minute": 60
@@ -399,12 +436,15 @@ DELETE /api/lyrics/api-keys/:id
 
 ## 对外接口 · 音乐库 (`/api/v1/music`)
 
-与歌词库对外接口对称：同一套 API Key 表、同一套 CORS 策略、同样的信封。
+与歌词库 v1 共用 `middleware.V1API` 这一个实例：同一把密钥、同一套 CORS 白名单、
+同一份额度、同样的信封。
 
 ### `GET /api/v1/music/ping`
 
+公开自检，可选鉴权。带密钥时附带这把 key 的用量：
+
 ```json
-{ "ok": true, "data": { "ready": true } }
+{ "ok": true, "data": { "ready": true, "key_name": "博客脚本", "key_prefix": "lly_1a2b", "call_count": 128, "rate_limit_per_minute": 60 } }
 ```
 
 ### `GET /api/v1/music/tracks`

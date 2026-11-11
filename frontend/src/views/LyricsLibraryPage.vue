@@ -277,14 +277,23 @@
     <section v-show="tab === 'api'" class="ly-body">
       <div class="api-grid">
         <div class="api-card">
-          <div class="panel-head"><h3>接口地址</h3><span class="panel-sub">给别的系统调这个歌词库</span></div>
+          <div class="panel-head"><h3>接口地址</h3><span class="panel-sub">同一把密钥，音乐 / 歌词两套接口</span></div>
+          <div class="api-tabs">
+            <button
+              v-for="g in apiGroups"
+              :key="g.key"
+              class="api-tab"
+              :class="{ active: activeApi === g.key }"
+              @click="activeApi = g.key"
+            >{{ g.label }}</button>
+          </div>
           <div class="api-base">
             <code>{{ apiBase }}</code>
             <button class="mini-copy" @click="copyText(apiBase, '已复制接口地址')">复制</button>
           </div>
           <p class="api-hint">
             鉴权二选一：<code>X-API-Key: &lt;密钥&gt;</code> 或 <code>Authorization: Bearer &lt;密钥&gt;</code>。
-            密钥在右边签发，撤销后立即失效；同一把密钥多台机器共用一份额度。
+            密钥在右边签发，撤销后立即失效；同一把密钥共用一份额度（单实例内按密钥计数）。
           </p>
           <div class="api-list">
             <div v-for="e in apiEndpoints" :key="e.method + e.path" class="api-row">
@@ -548,13 +557,14 @@
 </template>
 
 <script>
-export default { name: 'LyricsLibraryTool' }
+export default { name: 'LyricsLibraryPage' }
 </script>
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { request, json as jsonBody } from '../api/client.js'
 import {
   Search, Plus, Edit, Delete, Star, StarFilled, CopyDocument, MagicStick,
   Refresh, Reading, Collection, DataAnalysis, Files, Download, Connection,
@@ -595,21 +605,9 @@ const genreLabel = v => genreOptions.find(x => x.value === v)?.label || v
 const kindLabel = v => kindOptions.find(x => x.value === v)?.label || '单句'
 
 // ── 通用请求 ──
-// 管理员会话是 Cookie（HttpOnly），必须显式带上 credentials 才会随请求发送。
-async function api(url, options = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...options })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `请求失败(${res.status})`)
-  return data
-}
-
-function jsonBody(payload) {
-  return {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }
-}
+// Cookie 携带、错误文案与状态码归一化统一在 src/api/client.js。
+// 保留本页的 api / jsonBody 短名，让下面几十个调用点不必改。
+const api = request
 
 // ── 基础状态 ──
 const tab = ref('songs')
@@ -826,17 +824,38 @@ async function saveBatchFetched() {
 }
 
 // ── 对外接口 ──
-const apiBase = computed(() => `${window.location.origin}/api/v1/lyrics`)
-const apiEndpoints = [
-  { method: 'GET', path: '/ping', desc: '鉴权自检，返回这把 key 的用量' },
-  { method: 'POST', path: '/fetch', desc: '抓取一首歌词（save=true 顺带入库）' },
-  { method: 'POST', path: '/fetch/batch', desc: '批量抓取，一次最多 20 首' },
-  { method: 'GET', path: '/songs', desc: '列出库里歌词（keyword / artist / limit）' },
-  { method: 'POST', path: '/songs', desc: '把自有歌词推进库（不经抓取）' },
-  { method: 'GET', path: '/songs/:id', desc: '取单首' },
-  { method: 'GET', path: '/search?q=', desc: '行级检索，返回命中行号' },
-  { method: 'GET', path: '/stats', desc: '库的聚合统计' },
+// 同一把密钥同时能调音乐与歌词两套 v1，这里并列展示，
+// 免得外部系统只知道一半接口。
+const apiGroups = [
+  {
+    key: 'lyrics', label: '歌词 v1', path: '/api/v1/lyrics',
+    endpoints: [
+      { method: 'GET', path: '/ping', desc: '鉴权自检，带密钥时返回这把 key 的用量' },
+      { method: 'POST', path: '/fetch', desc: '抓取一首歌词（save=true 顺带入库）' },
+      { method: 'POST', path: '/fetch/batch', desc: '批量抓取，一次最多 20 首' },
+      { method: 'GET', path: '/songs', desc: '列出库里歌词（keyword / artist / limit）' },
+      { method: 'POST', path: '/songs', desc: '把自有歌词推进库（不经抓取）' },
+      { method: 'GET', path: '/songs/:id', desc: '取单首' },
+      { method: 'GET', path: '/search?q=', desc: '行级检索，返回命中行号' },
+      { method: 'GET', path: '/stats', desc: '库的聚合统计' },
+    ],
+  },
+  {
+    key: 'music', label: '音乐 v1', path: '/api/v1/music',
+    endpoints: [
+      { method: 'GET', path: '/ping', desc: '鉴权自检，带密钥时返回这把 key 的用量' },
+      { method: 'GET', path: '/tracks', desc: '精简曲库列表（keyword / fav / sort / limit）' },
+      { method: 'GET', path: '/tracks/:id', desc: '单曲详情（含歌词与备注）' },
+      { method: 'GET', path: '/snapshot', desc: '全量精简曲库 + 统计，支持 rev 增量' },
+      { method: 'GET', path: '/search?q=', desc: '按关键词检索曲目' },
+      { method: 'GET', path: '/stream/:id', desc: '音频流，支持 Range（不套 JSON 信封）' },
+    ],
+  },
 ]
+const activeApi = ref('lyrics')
+const apiGroup = computed(() => apiGroups.find(g => g.key === activeApi.value) || apiGroups[0])
+const apiBase = computed(() => `${window.location.origin}${apiGroup.value.path}`)
+const apiEndpoints = computed(() => apiGroup.value.endpoints)
 
 const apiUnlocked = ref(false)
 const apiLoading = ref(false)
@@ -844,10 +863,18 @@ const apiKeys = ref([])
 const newKeyName = ref('')
 const freshKey = ref('')
 
-const curlSample = computed(() => `curl -X POST '${apiBase.value}/fetch' \\
-  -H 'X-API-Key: <你的密钥>' \\
-  -H 'Content-Type: application/json' \\
-  -d '{"song":"晴天","artist":"周杰伦","engine":"auto","save":true}'`)
+const curlSample = computed(() => {
+  const keyHeader = "  -H 'X-API-Key: <你的密钥>' \\"
+  if (activeApi.value === 'music') {
+    return [`curl '${apiBase.value}/tracks?limit=10' \\`, keyHeader].join('\n')
+  }
+  return [
+    `curl -X POST '${apiBase.value}/fetch' \\`,
+    keyHeader,
+    "  -H 'Content-Type: application/json' \\",
+    `  -d '{"song":"晴天","artist":"周杰伦","engine":"auto","save":true}'`,
+  ].join('\n')
+})
 
 // 密钥管理不再单独输密码：进到这一页就说明是管理员，
 // 身份由会话 Cookie（HttpOnly）自动带上。
@@ -867,13 +894,8 @@ async function loadApiKeys() {
 async function createApiKey() {
   apiLoading.value = true
   try {
-    const res = await fetch('/api/lyrics/api-keys', {
-      ...jsonBody({ name: newKeyName.value.trim() || '未命名' }),
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `签发失败(${res.status})`)
+    const data = await api('/api/lyrics/api-keys',
+      jsonBody({ name: newKeyName.value.trim() || '未命名' }))
     freshKey.value = data.plain
     apiKeys.value.unshift(data.item)
     newKeyName.value = ''
@@ -1366,7 +1388,7 @@ async function randomFragment() {
     })
     if (!fragments.value.some(x => x.id === f.id)) fragments.value.unshift(f)
     // 记一次"被取用"，便于回看哪些句子最常被翻到
-    fetch(`/api/lyrics/fragments/${f.id}/use`, { method: 'POST' }).catch(() => {})
+    api(`/api/lyrics/fragments/${f.id}/use`, { method: 'POST' }).catch(() => {})
   } catch (err) {
     ElMessage.warning(err.message)
   }
@@ -1804,6 +1826,14 @@ onMounted(() => {
 .api-hint { font-size: 12px; line-height: 1.7; color: #64748b; margin: 0 0 12px; }
 .api-hint.small { font-size: 11.5px; margin: 8px 0 0; }
 .api-hint code { color: #a5b4fc; font-size: 11.5px; }
+.api-tabs { display: flex; gap: 6px; margin: 0 0 12px; }
+.api-tab {
+  padding: 4px 12px; border-radius: 999px; cursor: pointer; font-size: 11.5px;
+  border: 1px solid rgba(148, 163, 184, 0.2); background: transparent; color: #94a3b8;
+  transition: all 0.16s;
+}
+.api-tab:hover { border-color: rgba(139, 92, 246, 0.5); color: #c4b5fd; }
+.api-tab.active { background: rgba(139, 92, 246, 0.18); border-color: rgba(139, 92, 246, 0.5); color: #c4b5fd; }
 .api-list { display: flex; flex-direction: column; gap: 6px; }
 .api-row { display: flex; align-items: baseline; gap: 9px; font-size: 12.5px; }
 .api-method {
@@ -1852,7 +1882,14 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .lyrics-app { padding: 0 12px 140px; }
+  .lyrics-app { padding: 0 12px calc(140px + env(safe-area-inset-bottom, 0px)); }
+  .ly-hero { padding: 28px 0 14px; }
+  .ly-stats { gap: 18px; }
+  .ly-tabs { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+  .ly-tabs::-webkit-scrollbar { display: none; }
+  .ly-tab { flex-shrink: 0; padding: 8px 13px; font-size: 12.5px; }
+  .ly-toolbar { gap: 8px; }
+  .toolbar-left, .toolbar-right { width: 100%; }
   .search-input { width: 100%; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .span-2 { grid-column: span 1; }
@@ -1861,5 +1898,6 @@ onMounted(() => {
   .song-actions { opacity: 1; }
   .hit-row { flex-direction: column; align-items: flex-start; gap: 6px; }
   .api-grid { grid-template-columns: 1fr; }
+  .api-pre { font-size: 11px; }
 }
 </style>

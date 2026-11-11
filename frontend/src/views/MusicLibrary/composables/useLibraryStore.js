@@ -16,7 +16,7 @@ import {
 
 const PAGE_SIZE = 100       // 列表视图每次追加
 const FETCH_SIZE = 200      // 聚合视图补齐全量时用大页，减少往返
-const MAX_TRACKS = 5000     // 防御性上限；后端单次 limit 上限 500，但 offset 可继续翻
+const MAX_TRACKS = 5000     // 防御性上限；后端单次 limit 上限 2000，offset 可继续翻页
 const MAX_BATCH = 50        // 批量操作上限，避免误选几百首打出一片请求
 const PREFS_KEY = 'musiclib.prefs.v2'
 

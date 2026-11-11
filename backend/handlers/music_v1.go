@@ -4,75 +4,26 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/axfinn/music/backend/middleware"
 	"github.com/axfinn/music/backend/models"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ── 音乐库对外接口 /api/v1/music ──
-// 与歌词库对外接口对称：同样的 API Key 鉴权（复用 lyrics 的 lyric_api_keys 表）、
-// 同样的 CORS 策略（读 h.cfg.Lyrics.AllowOrigins）、同样的 {"ok":bool,"data":...} 信封。
-// 站内 /api/music/* 不变，这里只新增一套"给别的系统用"的对称接口。
+// 与歌词库 v1 共用 middleware.V1API 这一个实例：同一把密钥、同一套 CORS 白名单、
+// 同一份 {"ok":bool,"data":...} 信封。这里只写音乐库自己的数据端点。
 
-const musicAPIKeyCtx = "music_api_key"
-
-// V1CORS 对外接口的跨域放行，逻辑照搬歌词库 V1CORS：
-// 凭据是密钥而不是 Cookie，默认放开来源；配置 lyrics.allow_origins 可收紧白名单。
-func (h *MusicHandler) V1CORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		allowed := "*"
-		if list := h.cfg.Lyrics.AllowOrigins; len(list) > 0 {
-			allowed = ""
-			for _, o := range list {
-				if strings.EqualFold(strings.TrimSpace(o), origin) || strings.TrimSpace(o) == "*" {
-					allowed = origin
-					break
-				}
-			}
-		}
-		if allowed != "" {
-			c.Header("Access-Control-Allow-Origin", allowed)
-			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization")
-			c.Header("Access-Control-Max-Age", "86400")
-		}
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	}
-}
-
-// APIKeyAuth 对外接口的密钥门：复用 lyric_api_keys 表与 lyrics 同一套校验方法
-// （models.VerifyLyricAPIKey 会校验有效性、是否撤销，并累加调用次数）。
-// 支持 `X-API-Key` 与 `Authorization: Bearer`，失败返回 401。
-func (h *MusicHandler) APIKeyAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		raw := extractLyricAPIKey(c)
-		if raw == "" {
-			v1Fail(c, http.StatusUnauthorized, "缺少密钥：请用 X-API-Key 或 Authorization: Bearer <key>")
-			return
-		}
-		key, err := h.db.VerifyLyricAPIKey(raw)
-		if err != nil {
-			v1Fail(c, http.StatusUnauthorized, "密钥无效或已撤销")
-			return
-		}
-		if h.keyLimiter != nil && !h.keyLimiter.Allow(key.ID) {
-			v1Fail(c, http.StatusTooManyRequests, "该密钥请求过于频繁，请稍后再试")
-			return
-		}
-		c.Set(musicAPIKeyCtx, key)
-		c.Next()
-	}
-}
-
-// V1Ping GET /api/v1/music/ping — 公开自检（只挂 CORS，不鉴权）。
+// V1Ping GET /api/v1/music/ping — 公开自检；带合法密钥时附带这把 key 的用量。
 func (h *MusicHandler) V1Ping(c *gin.Context) {
-	v1OK(c, gin.H{"ready": true}, nil)
+	info := gin.H{"ready": true}
+	if key, ok := middleware.APIKeyFromContext(c); ok {
+		info["key_name"] = key.Name
+		info["key_prefix"] = key.Prefix
+		info["call_count"] = key.CallCount
+		info["rate_limit_per_minute"] = h.cfg.API.KeyRateLimit
+	}
+	v1OK(c, info, nil)
 }
 
 // V1ListTracks GET /api/v1/music/tracks — 精简列表（keyword/fav/sort/limit/offset）。

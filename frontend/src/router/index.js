@@ -3,14 +3,15 @@ import { refreshAdmin, useAdmin } from '../composables/useAdmin.js'
 
 // 前端路由表。
 //
-// 三个页面各自独立：
-//   /music             音乐库 —— 访客可听歌
-//   /lyrics            歌词库 —— 后台
-//   /discover          发现流 —— 后台
-//   /music/visualizer  沉浸播放 —— 访客可听歌
+// 曲库是站点主体，歌词库与歌词发现是后台能力：
+//   /music             曲库 —— 访客可听歌
+//   /music/visualizer  沉浸播放 —— 全屏页，访客可听歌
+//   /lyrics            歌词库 —— 后台（管理）
+//   /discover          歌词发现 —— 后台（管理）
+//   /admin/login       管理入口
 //
 // 关于 useMediaPlayer：
-//   它是模块级单例（state / audioEl 都在模块作用域），所以音乐库页放的歌，
+//   它是模块级单例（state / audioEl 都在模块作用域），所以曲库页放的歌，
 //   切到沉浸播放页还在放——这正是两个页面共用同一个 player 的原因。
 //
 // 关于后台守卫：
@@ -22,25 +23,25 @@ const routes = [
   {
     path: '/music',
     name: 'MusicLibrary',
-    component: () => import('../views/MusicLibraryTool.vue'),
+    component: () => import('../views/MusicLibraryPage.vue'),
   },
   {
     path: '/music/visualizer',
     name: 'MusicVisualizer',
-    component: () => import('../views/MusicVisualizerTool.vue'),
-    // 沉浸播放是全屏页，不显示顶部导航。
-    meta: { immersive: true },
+    component: () => import('../views/VisualizerPage.vue'),
+    // 沉浸播放是全屏页，不显示顶部导航，同时锁死视口（不需要页面滚动）。
+    meta: { immersive: true, fullscreen: true },
   },
   {
     path: '/lyrics',
     name: 'LyricsLibrary',
-    component: () => import('../views/LyricsLibraryTool.vue'),
+    component: () => import('../views/LyricsLibraryPage.vue'),
     meta: { admin: true },
   },
   {
     path: '/discover',
     name: 'Discover',
-    component: () => import('../views/DiscoverTool.vue'),
+    component: () => import('../views/LyricDiscoverPage.vue'),
     meta: { admin: true },
   },
   {

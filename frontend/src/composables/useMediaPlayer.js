@@ -1,4 +1,5 @@
 import { reactive, computed } from 'vue'
+import { siteAlbum } from '../site.js'
 
 // ── Singleton reactive state (survives route navigation) ──
 function initialVolume() {
@@ -209,7 +210,7 @@ function updateMediaMetadata(track) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track?.title || '未命名',
       artist: track?.artist || '',
-      album: 'DevTools 音乐库',
+      album: siteAlbum(),
       artwork: track?.cover ? [{ src: track.cover, sizes: '512x512' }] : [],
     })
     navigator.mediaSession.playbackState = 'playing'

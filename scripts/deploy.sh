@@ -193,7 +193,6 @@ cmd_update() {
   local prev_tag prev_image
   prev_image="$(current_image)"
   prev_tag="${prev_image##*:}"
-  [[ "${prev_image}" == "${MUSIC_IMAGE}:${MUSIC_TAG}" ]] && prev_tag=""
 
   # 1. 拉取最新代码（仅在是 git 仓库且工作区没有阻塞性改动时）
   if [[ -d .git ]]; then
@@ -205,12 +204,20 @@ cmd_update() {
     fi
   fi
 
-  # 2. 用 git 短 sha 打标签，方便回滚
+  # 2. 用 git 短 sha 打标签，方便回滚。
+  #    工作区有未提交改动时 HEAD 不变，直接复用同名标签会覆盖正在运行的镜像，
+  #    让 rollback 无旧版可退；此时追加时间戳生成唯一标签，旧标签得以保留。
   if [[ -d .git ]]; then
-    local sha
+    local sha running_tag
     sha="$(git rev-parse --short HEAD 2>/dev/null || true)"
+    running_tag="$(current_image)"
+    running_tag="${running_tag##*:}"
     if [[ -n "${sha}" ]]; then
       export MUSIC_TAG="${sha}"
+      if [[ "${sha}" == "${running_tag}" ]]; then
+        export MUSIC_TAG="${sha}-$(date '+%Y%m%d-%H%M%S')"
+        warn "HEAD 未变（有未提交改动或重复发布），改用唯一标签：${MUSIC_IMAGE}:${MUSIC_TAG}"
+      fi
       log "本次发布标签：${MUSIC_IMAGE}:${MUSIC_TAG}"
     fi
   fi
