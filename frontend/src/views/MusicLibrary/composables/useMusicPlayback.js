@@ -16,6 +16,35 @@ import { extractDominant, paletteToCss } from '../utils/palette.js'
 
 const LOOP_MODES = ['off', 'all', 'one']
 
+// 「随机播放」不能只洗当前筛选出来的结果:搜索命中 1 首、收藏只有 1 首、
+// 下钻到单曲专辑时,原来的实现会生成一条只有 1 首(甚至 0 首)的队列。
+// 用 /snapshot 的全量精简曲目做兜底,rev 命中时后端只回 not_modified,零载荷。
+let fullLibraryCache = { rev: '', items: [] }
+let shuffleReqSeq = 0
+
+async function fetchFullLibrary() {
+  const data = await musicApi.snapshot({ rev: fullLibraryCache.rev })
+  if (data.notModified) return fullLibraryCache.items
+  let items = data.items || []
+  // /snapshot 上限 20000,真的超了再按页补,避免队列被悄悄截断
+  if (data.truncated) {
+    const seen = new Set(items.map(t => t.id))
+    let offset = items.length
+    while (true) {
+      const page = await musicApi.list({ limit: 200, offset })
+      const batch = page.items || []
+      const fresh = batch.filter(t => t.id && !seen.has(t.id))
+      if (!fresh.length) break
+      fresh.forEach(t => seen.add(t.id))
+      items = items.concat(fresh)
+      offset += batch.length
+      if (batch.length < 200 || offset >= page.total) break
+    }
+  }
+  fullLibraryCache = { rev: data.revision || '', items }
+  return items
+}
+
 export function useMusicPlayback(store, { route, router, focusSearch } = {}) {
   const player = useMediaPlayer()
   const state = player.state
@@ -101,18 +130,63 @@ export function useMusicPlayback(store, { route, router, focusSearch } = {}) {
     player.playAll(playable.map(toPlayerTrack), Math.min(startIndex, playable.length - 1))
   }
 
+  /**
+   * 「随机播放 / 播放全部」入口。
+   *
+   * 两个踩过的坑:
+   *  1. play() 必须发生在用户点击的同步调用栈里。原实现先 await 分页请求,
+   *     浏览器的 transient activation 过期后 play() 被静默拒绝 —— 点了没反应。
+   *     所以先用当前视图立刻起播,再异步补齐队列并无缝扩展(不重建 <audio>)。
+   *  2. 当前视图可能只筛出 0/1 首(搜索、收藏、下钻单曲专辑)。随机播放这时
+   *     回退到全库快照,不再退化成「只有一首歌」。
+   */
   async function playAllVisible({ shuffle = false } = {}) {
-    // 列表是分页的：不补齐的话「播放全部 859 首」实际只会播已加载的那一页
-    if (store.hasMore?.value) {
-      const loadingMsg = ElMessage({ message: '正在读取完整曲库…', duration: 0 })
-      try { await store.ensureComplete() } finally { loadingMsg.close() }
-    }
-    const list = playableOnly(store.visibleTracks.value)
-    if (!list.length) return ElMessage.warning('当前没有可播放的歌曲')
-    const start = shuffle ? Math.floor(Math.random() * list.length) : 0
+    const seq = ++shuffleReqSeq
+    const viewList = playableOnly(store.visibleTracks.value)
+
+    // ① 同步起播:以下调用链里不能有任何 await
     player.setShuffle(shuffle)
-    playTracks(list, start)
-    if (shuffle) ElMessage.success(`已生成 ${list.length} 首的随机列表`)
+    let started = false
+    if (viewList.length) {
+      const start = shuffle ? Math.floor(Math.random() * viewList.length) : 0
+      playTracks(viewList, start)
+      started = state.playlist.length > 0
+    }
+
+    const needFull = shuffle && viewList.length < 2
+    const needPaging = !shuffle && !!store.hasMore?.value
+    if (!needFull && !needPaging) {
+      if (!viewList.length) ElMessage.warning('当前没有可播放的歌曲')
+      else if (shuffle) ElMessage.success(`已生成 ${state.playlist.length} 首的随机列表`)
+      return
+    }
+
+    const loadingMsg = started ? null : ElMessage({ message: '正在读取完整曲库…', duration: 0 })
+    try {
+      let source
+      if (needFull) {
+        source = playableOnly(await fetchFullLibrary())
+      } else {
+        await store.ensureComplete()
+        source = playableOnly(store.visibleTracks.value)
+      }
+      if (seq !== shuffleReqSeq) return // 连点了两次,只认最后一次
+      if (!source.length) {
+        if (!started) ElMessage.warning('曲库里没有可播放的歌曲')
+        return
+      }
+      if (started) {
+        // 保持正在播的那首不中断,只把队列换成完整的一份
+        player.replaceQueue(source.map(toPlayerTrack), { shuffle })
+      } else {
+        playTracks(source, shuffle ? Math.floor(Math.random() * source.length) : 0)
+      }
+      if (shuffle) ElMessage.success(`已生成 ${state.playlist.length} 首的随机列表`)
+    } catch {
+      if (seq === shuffleReqSeq && !started) ElMessage.warning('曲库读取失败，请稍后重试')
+    } finally {
+      loadingMsg?.close()
+    }
   }
 
   function playGroup(group) { playTracks(group.items) }
@@ -131,6 +205,16 @@ export function useMusicPlayback(store, { route, router, focusSearch } = {}) {
   }
 
   function toggleMute() { player.setVolume(state.volume === 0 ? 1 : 0) }
+
+  // ── 播放失败不能只记在 state 里:以前 UI 没有展示 error,
+  //    浏览器拒绝自动播放 / 文件缺失时用户只看到「点了没反应」──
+  let lastError = ''
+  watch(() => state.error, (msg) => {
+    if (!msg) { lastError = ''; return }
+    if (msg === lastError) return
+    lastError = msg
+    ElMessage.warning(msg)
+  })
 
   // ── 切歌记一次播放数（只记本曲库的曲目，且同一 index 不重复）──
   let lastCountedId = ''

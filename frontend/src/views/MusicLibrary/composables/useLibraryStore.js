@@ -1,9 +1,14 @@
 /**
- * 曲库数据中枢：快照 / 搜索 / 排序 / 收藏筛选 / 统计 / CRUD / 多选 / 偏好持久化。
+ * 曲库数据中枢：首屏 / 快照 / 搜索 / 排序 / 收藏筛选 / 统计 / CRUD / 多选 / 偏好持久化。
  *
  * 组件只消费这里的 computed 与方法，不再自己拼 fetch。
- * 首屏走一次 /snapshot 拿齐「全量精简曲目 + 统计」（后端不返回歌词/备注正文），
- * 并用 revision 做增量：数据与筛选都没变时后端只回 not_modified，零载荷零重渲染。
+ *
+ * 首屏分两段，别让 1MB 级别的全量快照挡住第一帧：
+ *   1) /tracks 只取第一页 + 服务端总数/统计（几十 KB），立刻解锁 loading
+ *   2) /snapshot 在后台补齐全量精简曲目（专辑/歌手聚合、facets、随机播放队列要用）
+ * 全量快照固定按 created 取，排序交给本地；切排序因此不再重传整份曲库。
+ * revision 做增量：数据与筛选都没变时后端只回 not_modified，零载荷。
+ * 同一筛选已缓存全量时，连第一页都不用等，直接用缓存出首屏。
  * ensureComplete() / loadMore() 仅作为快照超限或旧后端降级时的分页兜底。
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
@@ -64,6 +69,10 @@ export function useLibraryStore() {
   let controller = null
   let searchTimer = null
   let ensurePromise = null
+  // 上一次快照拿到的全量精简曲目，以及它对应的筛选条件。
+  // 有了它，回到同一视图时首屏可以零请求直接出内容。
+  let fullItems = []
+  let fullKey = ''
   // 首次加载完成信号：keep-alive 下 onActivated 可能早于 onMounted 的 await 结束，
   // 「?play=」直达播放必须等曲库真的到货再找，否则会误报「没找到」。
   let resolveReady = null
@@ -79,9 +88,11 @@ export function useLibraryStore() {
   const facets = computed(() => buildFacets(tracks.value, dimension.value))
   const visibleTracks = computed(() => {
     let list = applyFacet(tracks.value, dimension.value, facetFilter.value)
-    if (section.value === 'recent') list = sortLocal(list, 'created').slice(0, 40)
-    if (isFiltering.value && sortBy.value !== 'created') list = sortLocal(list, sortBy.value)
-    return list
+    // 「最近」是固定语义，不受排序下拉影响
+    if (section.value === 'recent') return sortLocal(list, 'created').slice(0, 40)
+    // 全量快照统一按 created 取，所以任何非默认排序都在本地重排。
+    // setSortBy 因此不必回服务端，切排序不再重传整份曲库。
+    return sortBy.value === 'created' ? list : sortLocal(list, sortBy.value)
   })
   const groups = computed(() => groupTracks(visibleTracks.value, dimension.value))
   const insights = computed(() => libraryInsights(tracks.value, stats.value))
@@ -115,65 +126,109 @@ export function useLibraryStore() {
     }
   }
 
+  // 全量快照与排序解耦，所以缓存 key 不含 sortBy
+  const filterKey = () => `${keyword.value.trim()}|${effectiveFav.value}`
+
+  // ready 只由最后一次 load 结算：被抢占的请求不能提前放行 ?play= 直达播放
+  function settleReady(seq) {
+    if (seq !== reqSeq) return
+    resolveReady?.()
+    resolveReady = null
+  }
+
+  /**
+   * 两段式加载。load() 的 Promise 仍然等全量快照结束（保持 onMounted 与 ?play=
+   * 的时序），但 loading 在第一页到手时就关掉，页面不用等那一大包快照。
+   */
   async function load() {
     const seq = ++reqSeq
     controller?.abort()
     controller = new AbortController()
+    const signal = controller.signal
     loading.value = true
     error.value = ''
-    let legacyMode = false
-    try {
-      const data = await musicApi.snapshot({
-        keyword: keyword.value,
-        fav: effectiveFav.value,
-        sort: sortBy.value,
-        rev: revision.value,
-        signal: controller.signal,
-      })
-      if (seq !== reqSeq) return
-      // not_modified：数据和筛选都没变，保留现有 tracks/stats，不触发重渲染
-      if (!data.notModified) {
-        tracks.value = data.items
-        total.value = data.total
-        revision.value = data.revision
-        if (data.stats) stats.value = data.stats
+
+    const key = filterKey()
+    const cached = fullKey === key && fullItems.length ? fullItems : null
+    let firstOk = !!cached
+    if (cached) {
+      // 同一筛选已有全量：零请求直接出首屏，后面的快照只用来校验数据版本
+      tracks.value = cached
+      loading.value = false
+    } else {
+      // 阶段一：只取第一页（默认 100 条），几十 KB，立刻可渲染、可播放
+      try {
+        const first = await musicApi.list({ ...listParams(0), withStats: true, signal })
+        if (seq !== reqSeq) return
+        tracks.value = first.items || []
+        total.value = first.total || 0
+        if (first.stats) stats.value = first.stats
+        firstOk = true
+      } catch (e) {
+        if (e?.name === 'AbortError' || seq !== reqSeq) return
+        error.value = e.message || '曲库加载失败'
+        ElMessage.error(error.value)
+      } finally {
+        if (seq === reqSeq) loading.value = false
       }
+    }
+    if (!firstOk) {
+      settleReady(seq)
+      return
+    }
+
+    // 阶段二：后台补齐全量。失败不弹错、不覆盖阶段一已经能用的数据。
+    try {
+      await hydrateSnapshot(seq, signal)
+    } finally {
+      settleReady(seq)
+    }
+  }
+
+  /** 后台全量补齐；只由 load() 调用，不占用首屏 loading */
+  async function hydrateSnapshot(seq, signal) {
+    // 请求发出前把筛选条件定格，避免防抖期间 keyword 变了却把旧结果缓存成新 key
+    const key = filterKey()
+    const params = {
+      keyword: keyword.value,
+      fav: effectiveFav.value,
+      // 固定 created：排序是纯视图变换，不该让 rev token 跟着变、重传整份曲库
+      sort: 'created',
+      rev: revision.value,
+      signal,
+    }
+    try {
+      const data = await musicApi.snapshot(params)
+      if (seq !== reqSeq) return
+      if (data.notModified) {
+        // 后台补齐失败后重试等边缘情况：手里只有第一页，但缓存里有全量
+        if (fullKey === key && fullItems.length > tracks.value.length) {
+          tracks.value = fullItems
+        }
+        return
+      }
+      fullItems = data.items || []
+      fullKey = key
+      tracks.value = fullItems
+      total.value = Math.max(total.value, data.total || 0)
+      revision.value = data.revision || ''
+      if (data.stats) stats.value = data.stats
+      // 超过后端 2 万条上限时才继续翻页
+      if (data.truncated) ensureComplete()
     } catch (e) {
       if (e?.name === 'AbortError' || seq !== reqSeq) return
       // 前端可能先于后端发布（热部署只叠 dist）：旧后端没有 /snapshot，
-      // 完整退回原来的「首页 + 逐页补齐」，不会白屏。
+      // 退回「第一页 + 逐页补齐」，不会白屏。
       if (e.status === 404 || e.status === 405) {
-        legacyMode = true
-        try {
-          const first = await musicApi.list(listParams(0))
-          if (seq !== reqSeq) return
-          tracks.value = first.items
-          total.value = first.total
-          revision.value = ''
-        } catch (e2) {
-          if (e2?.name === 'AbortError' || seq !== reqSeq) return
-          error.value = e2.message || '曲库加载失败'
-          ElMessage.error(error.value)
-          return
-        }
-      } else {
-        error.value = e.message || '曲库加载失败'
-        ElMessage.error(error.value)
+        fullItems = []
+        fullKey = ''
+        revision.value = ''
+        refreshStats()
+        if (needsFullLibrary.value && hasMore.value) ensureComplete()
         return
       }
-    } finally {
-      if (seq === reqSeq) {
-        loading.value = false
-        resolveReady?.()
-        resolveReady = null
-      }
-    }
-    if (legacyMode) {
-      refreshStats()
-      if (needsFullLibrary.value) ensureComplete()
-    } else if (needsFullLibrary.value && hasMore.value) {
-      // 只有快照被后端截断（超过上限）才继续翻页
-      ensureComplete()
+      // 超时 / 5xx：保留第一页可用数据，别在后台打出一串分页请求；
+      // 用户仍可手动「加载更多」，下次 load 会用 rev 再试一次。
     }
   }
 
@@ -231,8 +286,8 @@ export function useLibraryStore() {
     section.value = next
     facetFilter.value = ''
     selected.value = new Set()
-    // 统一走快照：切到「收藏」再切回「发现」时 effectiveFav 变了，
-    // 旧逻辑只 ensureComplete() 会导致发现页只剩收藏子集。rev 命中时成本极低。
+    // 切到「收藏」再切回「发现」时 effectiveFav 变了，必须重新取数，
+    // 否则发现页只剩收藏子集；同一筛选命中缓存时首屏零请求。
     load()
   }
 
@@ -241,7 +296,8 @@ export function useLibraryStore() {
     selected.value = new Set()
   }
 
-  function setSortBy(v) { sortBy.value = v; load() }
+  // 排序是纯视图变换：visibleTracks 本地重排即可，不回服务端重传整份曲库
+  function setSortBy(v) { sortBy.value = v }
   function setViewMode(v) { viewMode.value = v }
   function toggleFavOnly() { favOnly.value = !favOnly.value; load() }
   function setFavFilter(v) { favOnly.value = !!v; load() }

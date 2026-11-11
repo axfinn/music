@@ -86,7 +86,7 @@ const showGridToggle = computed(() => isBrowse.value)
         <span class="btn-text">只看收藏</span>
       </button>
 
-      <button class="ml-btn shuffle-btn" title="把当前视图洗成随机列表播放" @click="playback.playAllVisible({ shuffle: true })">
+      <button class="ml-btn shuffle-btn" title="随机播放当前列表；列表不足 2 首时自动洗全库" @click="playback.playAllVisible({ shuffle: true })">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
         </svg>

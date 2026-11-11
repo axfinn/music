@@ -46,12 +46,19 @@ export function coverUrl(track) {
 }
 
 export const musicApi = {
-  async list({ keyword = '', fav = false, sort = 'created', limit = 100, offset = 0, signal } = {}) {
+  async list({ keyword = '', fav = false, sort = 'created', limit = 100, offset = 0, withStats = false, signal } = {}) {
     const p = new URLSearchParams({ limit: String(limit), offset: String(offset), sort })
     if (keyword.trim()) p.set('keyword', keyword.trim())
     if (fav) p.set('fav', '1')
+    // 首屏要同时显示统计卡片，顺手让后端一次带回，省掉一次 /stats 往返
+    if (withStats) p.set('with_stats', '1')
     const data = await request(`/tracks?${p}`, { signal })
-    return { items: data.items || [], total: Number(data.total || 0) }
+    return {
+      items: data.items || [],
+      total: Number(data.total || 0),
+      stats: data.stats || null,
+      revision: data.revision || '',
+    }
   },
 
   /**

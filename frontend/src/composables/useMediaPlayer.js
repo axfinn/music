@@ -24,9 +24,11 @@ const state = reactive({
 })
 
 let audioEl = null
-// 已因加载失败被跳过的曲目下标。用于打断「一首坏歌 + 单曲列表」时的
-// error → skipNext → 绕回自己 → error 无限循环(每轮还发一次网络请求)。
-let erroredIndex = -1
+// 连续加载失败计数。坏歌会触发 error → skipNext → 再 error 的连锁跳转,
+// 不能一路把整条随机队列跳完(最后 stop() 连队列一起清空,用户看到「点了没反应」)。
+// 连续失败到上限就停下说明原因;成功播出一首即归零。
+let consecutiveErrors = 0
+const MAX_CONSECUTIVE_ERRORS = 3
 
 // ── 频谱分析(AnalyserNode)──
 // 沉浸播放页(/music/visualizer)要真实频谱。一旦 createMediaElementSource 接管元素,
@@ -170,15 +172,15 @@ function onAudioError() {
   const track = currentTrack()
   state.isPlaying = false
   setPlaybackState('paused')
-  state.error = track
-    ? `「${track.title}」无法播放(文件缺失或格式不被浏览器支持)`
-    : '音频无法播放'
-  // 单曲列表 / 已经在这个下标失败过:再 skipNext 只会绕回自己,直接停下。
-  if (state.playlist.length <= 1 || erroredIndex === state.currentIndex) {
-    erroredIndex = state.currentIndex
+  consecutiveErrors++
+  // 单曲列表跳下一首只会绕回自己;连续坏歌则一路跳到队列见底。两者都停下。
+  if (state.playlist.length <= 1 || consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    state.error = consecutiveErrors >= MAX_CONSECUTIVE_ERRORS
+      ? '连续多首歌曲无法播放，已停止自动切歌（文件缺失或格式不被支持）'
+      : `「${track?.title || '这首'}」无法播放(文件缺失或格式不被浏览器支持)`
     return
   }
-  erroredIndex = state.currentIndex
+  state.error = `「${track?.title || '这首'}」无法播放，已跳到下一首`
   skipNext()
 }
 function onLoadedMetadata() { state.duration = audioEl?.duration || 0 }
@@ -276,6 +278,26 @@ function rebuildShuffleOrder(keepFirst) {
   }
 }
 
+/**
+ * 切歌前校验洗牌序列还配得上当前队列。
+ *
+ * 队列是全局单例,任何一条替换 playlist 的路径(单曲点播、后台补齐全库、
+ * 旧版本留下的状态)都可能让 shuffleOrder 停留在别的长度。此时
+ * shuffleOrder.indexOf(currentIndex) 会得到 -1 或越界下标,playIndex 直接
+ * return —— 表现就是「随机播放点了没反应 / 只播一首就停」。
+ * 这里统一自愈:长度不符或找不到当前曲就重洗一条,并把当前曲固定在最前。
+ */
+function ensureShuffleOrder() {
+  if (!state.shuffleMode) {
+    state.shuffleOrder = null
+    return
+  }
+  const order = state.shuffleOrder
+  if (!order || order.length !== state.playlist.length || order.indexOf(state.currentIndex) < 0) {
+    rebuildShuffleOrder(state.currentIndex)
+  }
+}
+
 function onTrackEnded() {
   if (state.loopMode === 'one') {
     if (audioEl) {
@@ -287,8 +309,20 @@ function onTrackEnded() {
   }
 }
 
+/** 播放到队尾:停在当前曲,但保留队列(否则 UI 直接退回空态,像「没播过」) */
+function endOfQueue() {
+  if (audioEl) {
+    audioEl.pause()
+    try { audioEl.currentTime = 0 } catch { /* 尚未加载到可 seek */ }
+  }
+  state.isPlaying = false
+  state.currentTime = 0
+  setPlaybackState('paused')
+}
+
 function skipNext() {
   if (state.playlist.length === 0) return
+  ensureShuffleOrder()
   let next
   if (state.shuffleMode && state.shuffleOrder) {
     // 沿洗牌队列前进:走完一圈才轮到 loopMode=off 停下
@@ -297,26 +331,34 @@ function skipNext() {
     if (state.loopMode === 'all' || pos < len - 1) {
       next = state.shuffleOrder[(pos + 1) % len]
     } else {
-      stop()
+      endOfQueue()
       return
     }
   } else if (state.loopMode === 'all' || state.currentIndex < state.playlist.length - 1) {
     next = (state.currentIndex + 1) % state.playlist.length
   } else {
     // loopMode === 'off' and at the end — stop
-    stop()
+    endOfQueue()
     return
+  }
+  // 兜底:无论如何都要给出一个真实存在的下标,不能静默 return
+  if (!Number.isInteger(next) || next < 0 || next >= state.playlist.length) {
+    next = (state.currentIndex + 1) % state.playlist.length
   }
   playIndex(next)
 }
 
 function skipPrev() {
   if (state.playlist.length === 0) return
+  ensureShuffleOrder()
   let prev
   if (state.shuffleMode && state.shuffleOrder) {
     const pos = state.shuffleOrder.indexOf(state.currentIndex)
     prev = state.shuffleOrder[(pos <= 0 ? state.shuffleOrder.length : pos) - 1]
   } else {
+    prev = state.currentIndex <= 0 ? state.playlist.length - 1 : state.currentIndex - 1
+  }
+  if (!Number.isInteger(prev) || prev < 0 || prev >= state.playlist.length) {
     prev = state.currentIndex <= 0 ? state.playlist.length - 1 : state.currentIndex - 1
   }
   playIndex(prev)
@@ -327,19 +369,23 @@ function playIndex(idx) {
   state.currentIndex = idx
   const track = state.playlist[idx]
   if (!track) return
-  // 队列刚被整体替换过时 order 为空,这里补洗一次(当前曲固定在最前)
-  if (state.shuffleMode && !state.shuffleOrder) rebuildShuffleOrder(idx)
+  // 队列刚被整体替换 / 洗牌序列过期时,这里补洗一次(当前曲固定在最前)
+  ensureShuffleOrder()
 
   if (track.kind === 'audio') {
     createAudio(track.assetUrl)
     setupMediaSession()
     updateMediaMetadata(track)
-    audioEl.play().then(() => {
+    Promise.resolve(audioEl.play()).then(() => {
       state.isPlaying = true
       state.error = ''
-    }).catch(() => {
+      consecutiveErrors = 0
+    }).catch(err => {
       state.isPlaying = false
       setPlaybackState('paused')
+      // AbortError 通常是快速切歌时旧元素的 play() 被取消,新的一首会接管,不用打扰用户
+      if (err?.name === 'AbortError') return
+      state.error = '浏览器拦截了自动播放，请再点一次播放键'
     })
     // 必须在这里 return:下面那句无条件 `state.isPlaying = true` 会把 catch 里
     // 设的 false 覆盖掉,导致播放被浏览器拒绝时 UI 仍显示"播放中"。
@@ -347,10 +393,12 @@ function playIndex(idx) {
   }
   // Video playback is managed in-component since it needs a DOM element
   state.isPlaying = true
+  state.error = ''
+  consecutiveErrors = 0
 }
 
 function play(itemOrIndex) {
-  erroredIndex = -1 // 用户主动点播 = 重试,清掉失败标记
+  consecutiveErrors = 0 // 用户主动点播 = 重试,清掉连续失败标记
   if (typeof itemOrIndex === 'number') {
     playIndex(itemOrIndex)
     return
@@ -360,7 +408,9 @@ function play(itemOrIndex) {
   if (idx >= 0) {
     playIndex(idx)
   } else {
-    // Add single item to playlist and play
+    // 队列被整首替换成单曲:旧的洗牌序列必须作废,否则它仍是 N 个下标,
+    // 下一首会算出越界下标直接不播(随机模式下点歌「只有一首」的根因)。
+    state.shuffleOrder = null
     const track = itemOrIndex.primaryAsset || itemOrIndex._assets?.[0]
     if (!track?.asset_url) return
     state.playlist = [{
@@ -391,6 +441,7 @@ function togglePlay() {
 }
 
 function stop() {
+  consecutiveErrors = 0
   if (audioEl) {
     audioEl.pause()
     audioEl.removeEventListener('ended', onTrackEnded)
@@ -444,6 +495,8 @@ function addToPlaylist(item) {
   if (!track?.asset_url) return
   const exists = state.playlist.find(t => t.id === item.id)
   if (!exists) {
+    // 插入前先让洗牌序列与队列对齐,否则 splice 会把新下标插进一条过期序列
+    ensureShuffleOrder()
     state.playlist.push({
       id: item.id,
       title: item.title || '未命名',
@@ -462,12 +515,38 @@ function addToPlaylist(item) {
 }
 
 function playAll(items, startIndex = 0) {
-  erroredIndex = -1
+  consecutiveErrors = 0
   state.playlist = buildPlaylist(items)
   state.shuffleOrder = null // 整个队列被替换,旧顺序作废
   if (state.playlist.length > 0) {
     playIndex(Math.min(startIndex, state.playlist.length - 1))
   }
+}
+
+/**
+ * 后台把队列整体换成更完整的一份,但「正在播的那首」保持不动。
+ *
+ * 随机播放入口会先在用户点击的同步栈里起播,再异步补齐全库;这里不能重新
+ * createAudio(会打断播放),只改队列与洗牌序列,并把当前曲固定在队首。
+ * 返回是否真的替换成功(空列表视为失败,保留原队列)。
+ */
+function replaceQueue(items, { shuffle = state.shuffleMode } = {}) {
+  const list = buildPlaylist(items)
+  if (!list.length) return false
+  const current = currentTrack()
+  let idx = current ? list.findIndex(t => t.id === current.id) : -1
+  // 当前曲不在新队列里(例如筛选态补齐全库时数据有差异):把它留在队首,
+  // 否则 currentIndex 会指向别的歌,界面与实际声音对不上。
+  if (idx < 0 && current) {
+    list.unshift(current)
+    idx = 0
+  }
+  state.shuffleMode = !!shuffle
+  state.playlist = list
+  state.shuffleOrder = null
+  state.currentIndex = idx
+  if (state.shuffleMode) rebuildShuffleOrder(idx >= 0 ? idx : null)
+  return true
 }
 
 // Format seconds to mm:ss
@@ -495,6 +574,7 @@ export function useMediaPlayer() {
     setPlaylist,
     addToPlaylist,
     playAll,
+    replaceQueue,
     buildPlaylist,
     fmtTime,
     attachAnalyser,

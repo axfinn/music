@@ -19,7 +19,12 @@ import { refreshAdmin, useAdmin } from '../composables/useAdmin.js'
 //   守卫放行与否都不影响安全性，后端才是唯一裁判。
 
 const routes = [
-  { path: '/', redirect: '/music' },
+  // 根路径直接渲染曲库，不再 301/跳转（消除 / → /music 的重定向）。
+  {
+    path: '/',
+    name: 'Home',
+    component: () => import('../views/MusicLibraryPage.vue'),
+  },
   {
     path: '/music',
     name: 'MusicLibrary',
