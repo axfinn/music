@@ -1,21 +1,41 @@
-// MilkDrop 引擎 —— 直接跑开源项目 Butterchurn(jberg/butterchurn,MIT)。
-// 它把 Winamp MilkDrop 的 2D/3D 预设翻译成 WebGL,自带几百个社区预设,
-// 这是"极致炫酷"最省力也最靠谱的一条路(自己写 shader 很难追上这些预设的密度)。
+// 开源可视化引擎 —— Butterchurn (jberg/butterchurn, MIT) + butterchurn-presets
+// (Winamp MilkDrop 社区预设, 100 个)。这是本页**默认且首选**的画面来源。
 //
-// 和自研 three.js 场景的分工:
-//   自研(engine.js + scenes.js)= 简约、克制、和页面 UI 同一套视觉语言;
-//   MilkDrop(milkdrop.js)      = 迷幻、高密度、纯正的老牌可视化味道。
-// 两套互斥播放,同一时间只有一个在渲染,切换时停另一个,省 GPU。
+// 为什么不再自己写 shader:
+//   MilkDrop 预设是二十多年社区积累的方程/波形/形变, 密度与变化远超手搓的
+//   three.js 场景。自研场景(scenes.js)只保留为「LAB 实验」与 WebGL2 不可用时的
+//   回退, 不再和开源预设并列抢主位。
 //
-// 两个坑:
-//   1. 预设必须 `await import()` 懒加载 —— butterchurn + 预设包接近 400KB,
-//      不能进首屏 chunk;
-//   2. 预设名是社区字符串,版本升级可能改名,所以 CURATED 里存全名,
-//      匹配不到就按关键词模糊兜底,再不行才随机。
+// 本文件只做三件事:
+//   1. loadPresetLibrary()  —— 只读预设包, 让 UI 能在引擎下载完之前就列出全部预设;
+//   2. createMilkdropEngine() —— 建 WebGL 画布并把 analyser 接进 Butterchurn;
+//   3. 预设切换 / 生命周期管理(start/stop/resize/dispose)。
+//
+// 踩过的坑, 改之前别踩回去:
+//   * 预设包 + 引擎近 400KB, 必须动态 import, 不能进首屏 chunk;
+//   * butterchurn 的 gl.viewport 直接按传入 width/height 设, 内部不会乘 pixelRatio,
+//     所以要把「设备像素」当尺寸传、pixelRatio 恒为 1, 否则 DPR>1 屏幕上画面只占
+//     左下角, 留出 L 形黑边;
+//   * render() 不要传 elapsedTime, 它内部自己累计 lastTime;
+//   * 预设名是社区字符串, 版本升级会改名: 存全名 + 模糊兜底, 别按下标存;
+//   * 一部分预设在弱 GPU 上 shader 编译失败(黑屏), 默认随机只从体检过的池子抽。
 
-// 精选预设 —— 不是随手挑的名字:这 6 个是跑了一遍全量体检(100 个预设逐个渲染 +
-// 采样亮度)之后人工看画面留下的,要求是"有内容、不过曝、不像坏掉"。
-// 换预设请先跑一次体检测亮度,别只看名字好听。
+export const OPEN_SOURCE = {
+  engine: 'Butterchurn',
+  engineLicense: 'MIT',
+  engineUrl: 'https://github.com/jberg/butterchurn',
+  presets: 'MilkDrop 社区预设',
+  presetsUrl: 'https://github.com/jberg/butterchurn-presets',
+}
+
+// 首屏默认预设。挑它的理由很具体: Butterchurn 靠 analyser 驱动, 没播放时
+// 大部分预设几乎全黑(例如 skylight 静音时只剩几根暗线), 而 Rewop 的几何线框
+// 不依赖音频也有完整画面 —— 用户刚进页面还没放歌时不能像坏了。
+export const DEFAULT_PRESET = 'Unchained - Rewop'
+
+// 精选预设 —— 跑过一遍全量体检(逐个渲染 + 采样亮度)之后人工看画面留下的,
+// 标准是「有内容、不过曝、不像坏掉」。换预设请先体检测亮度, 别只看名字好听。
+// 顺序同时用于旧版 milk:序号 的迁移, 不要随意重排。
 export const CURATED_MILK = [
   { key: 'Eo.S. + Zylot - skylight (Stained Glass Majesty mix)', label: '彩窗', hint: '彩绘玻璃,冷光很干净' },
   { key: 'flexi + fishbrain - neon mindblob grafitti', label: '霓虹', hint: '霓虹 blob,饱和度拉满' },
@@ -25,8 +45,8 @@ export const CURATED_MILK = [
   { key: 'Flexi + Martin - cascading decay swing', label: '流淌', hint: '彩色颜料往下淌' },
 ]
 
-// 随机池:体检里"有画面、不过曝"的预设。随机只从这里抽,
-// 免得转到 shader 编译失败的黑屏预设(100 个里大约 1/5 在弱 GPU 上是黑的)。
+// 随机池: 体检里「有画面、不过曝」的预设。随机只从这里抽,
+// 免得转到 shader 编译失败的黑屏预设(全量里大约 1/5 在弱 GPU 上是黑的)。
 export const RANDOM_POOL = [
   'Eo.S. + Zylot - skylight (Stained Glass Majesty mix)',
   'Eo.S. + Phat - cubetrace - v2',
@@ -52,73 +72,115 @@ export const RANDOM_POOL = [
   'fiShbRaiN + Flexi - witchcraft 2.0',
 ]
 
-let modulePromise = null
-
-// 懒加载 + 单例:第二次进入直接复用已经解析好的模块
-function loadModules() {
-  if (!modulePromise) {
-    modulePromise = Promise.all([
-      import('butterchurn'),
-      import('butterchurn-presets'),
-    ]).then(([bc, presetMod]) => {
-      const butterchurn = bc.default || bc
-      const presets = presetMod.default || presetMod
-      const all = presets.getPresets()
-      return { butterchurn, all, keys: Object.keys(all) }
-    })
+// ── 预设名解析 ────────────────────────────────────────────────
+// 社区命名大致是 "作者A + 作者B - 作品名", 也有一批是 "_作者 - 作品" 或纯标题。
+// 拆成作者/标题两栏后, 列表才读得下去, 也才能按作者搜索。
+export function parsePresetName(key) {
+  const s = String(key).replace(/^_+/, '').trim()
+  const i = s.indexOf(' - ')
+  if (i > 0 && i < 70) {
+    return {
+      author: s.slice(0, i).replace(/\s*[_+]\s*/g, ' + ').trim() || 'Community',
+      title: s.slice(i + 3).trim() || s,
+    }
   }
-  return modulePromise
+  return { author: 'Community', title: s }
 }
 
-function resolveKey(keys, key) {
-  if (!key) return keys[0]
+export function resolveKey(keys, key) {
+  if (!key || !keys.length) return ''
   if (keys.includes(key)) return key
-  // 精确名对不上(版本改名/空格差异)→ 用前两段关键词模糊匹配
-  const tokens = key.toLowerCase().split(/[\s,+]+/).filter(t => t.length > 3).slice(0, 3)
-  const hit = keys.find(k => {
-    const low = k.toLowerCase()
-    return tokens.every(t => low.includes(t))
-  })
-  return hit || keys[0]
+  // 精确名对不上(版本改名/空格差异)→ 用前几段关键词模糊匹配
+  const tokens = key.toLowerCase().split(/[\s,+_]+/).filter(t => t.length > 3).slice(0, 3)
+  if (tokens.length) {
+    const hit = keys.find(k => {
+      const low = k.toLowerCase()
+      return tokens.every(t => low.includes(t))
+    })
+    if (hit) return hit
+  }
+  return ''
 }
 
-function supported() {
+let libraryPromise = null
+
+/** 只加载预设包。返回 { presets, keys, entries, verifiedKeys, curatedKeys }。 */
+export function loadPresetLibrary() {
+  if (!libraryPromise) {
+    libraryPromise = import('butterchurn-presets')
+      .then(mod => {
+        const api = mod.default || mod
+        const presets = api.getPresets ? api.getPresets() : api
+        const keys = Object.keys(presets)
+        const curatedKeys = CURATED_MILK.map(p => resolveKey(keys, p.key)).filter(Boolean)
+        const verifiedKeys = RANDOM_POOL.map(k => resolveKey(keys, k)).filter(Boolean)
+        const curatedSet = new Set(curatedKeys)
+        const verifiedSet = new Set(verifiedKeys)
+        const entries = keys.map(key => ({
+          key,
+          ...parsePresetName(key),
+          curated: curatedSet.has(key),
+          verified: verifiedSet.has(key),
+        }))
+        return { presets, keys, entries, verifiedKeys, curatedKeys }
+      })
+      .catch(err => {
+        // 允许下一次进入重试, 别把失败缓存成永久状态
+        libraryPromise = null
+        throw err
+      })
+  }
+  return libraryPromise
+}
+
+let butterchurnPromise = null
+function loadButterchurn() {
+  if (!butterchurnPromise) {
+    butterchurnPromise = import('butterchurn')
+      .then(mod => mod.default || mod)
+      .catch(err => {
+        butterchurnPromise = null
+        throw err
+      })
+  }
+  return butterchurnPromise
+}
+
+function supportsWebGL2() {
   try {
     const canvas = document.createElement('canvas')
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
-    return !!gl
+    return !!canvas.getContext('webgl2')
   } catch {
     return false
   }
 }
 
 /**
- * 创建 MilkDrop 渲染器。首次调用会下载约 400KB 的 chunk。
- * 返回 null 表示环境不支持(无 WebGL / 加载失败),调用方应回退到自研场景。
+ * 创建 MilkDrop 渲染器。首次调用会下载引擎 chunk(预设包可与 UI 并行预取)。
+ * 返回 null 表示环境不支持(无 WebGL2 / 加载失败), 调用方应回退到 LAB 场景。
  */
 export async function createMilkdropEngine({ container, getAudioContext, getAnalyser, isMobile = false }) {
-  if (!supported()) return null
-  let mod
+  if (!supportsWebGL2()) return null
+
+  let butterchurn, library
   try {
-    mod = await loadModules()
+    ;[butterchurn, library] = await Promise.all([loadButterchurn(), loadPresetLibrary()])
   } catch {
     return null
   }
-  const { butterchurn, all, keys } = mod
+  const { presets, keys } = library
   if (!keys.length) return null
 
   const canvas = document.createElement('canvas')
   canvas.className = 'viz-canvas viz-canvas-milk'
   container.appendChild(canvas)
 
-  // ⚠️ butterchurn 的 gl.viewport 是按传进去的 width/height 设的,内部**不会**再乘
-  // pixelRatio(它只拿 pixelRatio 算纹理 texsize)。所以如果按"CSS 尺寸 + 高 DPR 缓冲"
-  // 传参,在 DPR>1 的屏幕(macBook 视网膜屏、所有手机)上画面只会铺满画布左下角,
-  // 右边和上面留一条 L 形黑边。正确做法:直接把设备像素当尺寸传,pixelRatio 恒为 1。
+  // 见文件头: 尺寸按设备像素传, pixelRatio 恒为 1。
   function measure() {
     const w = Math.max(1, container.clientWidth)
     const h = Math.max(1, container.clientHeight)
-    const ratio = Math.min(window.devicePixelRatio || 1, 1.5) // 拖到另一块屏时 DPR 会变
+    const cap = isMobile ? 1.25 : 1.5
+    const ratio = Math.min(window.devicePixelRatio || 1, cap)
     return { bw: Math.round(w * ratio), bh: Math.round(h * ratio) }
   }
   const { bw, bh } = measure()
@@ -141,7 +203,6 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
 
   let raf = 0
   let running = false
-  let last = 0
   let currentKey = ''
   let warned = false
 
@@ -153,29 +214,47 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
   }
   connectAudio()
 
-  function loadPreset(key, blend = 1.2) {
+  function loadPreset(key, blend = 1.6) {
     const realKey = resolveKey(keys, key)
-    const preset = all[realKey]
+    const preset = presets[realKey]
     if (!preset) return ''
     try {
       viz.loadPreset(preset, blend)
       currentKey = realKey
+      warned = false
       return realKey
     } catch {
       return ''
     }
   }
 
-  function frame(now) {
+  /** 从指定池子里随机抽一个(默认用体检过的池子), 排除当前这个。 */
+  function randomPreset(pool) {
+    const source = (pool?.length ? pool : library.verifiedKeys.length ? library.verifiedKeys : keys)
+      .filter(k => keys.includes(k) && k !== currentKey)
+    const list = source.length ? source : keys.filter(k => k !== currentKey)
+    if (!list.length) return currentKey
+    return loadPreset(list[Math.floor(Math.random() * list.length)], 2.2)
+  }
+
+  /** 按给定顺序上/下一个; 当前不在列表里就从第一项开始。 */
+  function stepPreset(dir, pool) {
+    const list = pool?.length ? pool : keys
+    if (!list.length) return currentKey
+    const i = list.indexOf(currentKey)
+    const next = i < 0 ? 0 : (i + dir + list.length) % list.length
+    return loadPreset(list[next], 1.4)
+  }
+
+  function frame() {
     if (!running) return
     raf = requestAnimationFrame(frame)
-    last = now
     try {
-      // 不要传 elapsedTime:butterchurn 内部要自己累计 lastTime,
-      // 传了就不会更新,长时间播放会和真实时间脱节
+      // 不要传 elapsedTime: butterchurn 内部要自己累计 lastTime,
+      // 传了就不会更新, 长时间播放会和真实时间脱节
       viz.render()
     } catch (err) {
-      // 个别预设的 shader 在移动 GPU 上会编译失败:只喊一次,别刷屏
+      // 个别预设的 shader 在移动 GPU 上会编译失败: 只喊一次, 别刷屏
       if (!warned) {
         warned = true
         console.warn('[milkdrop] render failed:', err?.message || err)
@@ -183,52 +262,45 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
     }
   }
 
-  // 开发环境探针:用来批量筛"在这台机器上真的渲染得出来"的预设。
-  // 生产构建时 import.meta.env.DEV 为 false,整段会被摇掉。
-  function sample() {
-    try {
-      viz.render()
-      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
-      const px = new Uint8Array(4 * 64)
-      gl.readPixels(0, 0, 8, 8, gl.RGBA, gl.UNSIGNED_BYTE, px)
-      let sum = 0
-      for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2]
-      return sum / (64 * 3)
-    } catch {
-      return -1
-    }
-  }
+  // 开发环境探针: 用来批量筛「在这台机器上真的渲染得出来」的预设。
+  // 生产构建时 import.meta.env.DEV 为 false, 整段会被摇掉。
   if (import.meta.env.DEV) {
+    function sample() {
+      try {
+        viz.render()
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
+        const px = new Uint8Array(4 * 64)
+        gl.readPixels(0, 0, 8, 8, gl.RGBA, gl.UNSIGNED_BYTE, px)
+        let sum = 0
+        for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2]
+        return sum / (64 * 3)
+      } catch {
+        return -1
+      }
+    }
     window.__milk = {
       keys,
       sample,
       loadPreset,
       loadIndex: (i, blend = 0) => loadPreset(keys[i], blend),
-      // readPixels 必须在同一个任务里紧跟 render —— 默认缓冲合成后就读不到了
       render: () => { try { viz.render() } catch {} },
     }
   }
 
   return {
     canvas,
+    library,
     get currentKey() { return currentKey },
     get presetKeys() { return keys },
     loadPreset,
-    randomPreset() {
-      // 只从体检过的池子里抽(100 个里约 1/5 在弱 GPU 上是黑屏的);
-      // 同时排除当前这个 —— 否则 1/22 的概率会"点了没变化",看着像按钮失灵
-      const pool = RANDOM_POOL.filter(k => keys.includes(k) && k !== currentKey)
-      const list = pool.length ? pool : keys.filter(k => k !== currentKey)
-      const key = list[Math.floor(Math.random() * list.length)]
-      return loadPreset(key || keys[0], 2.2)
-    },
+    randomPreset,
+    stepPreset,
     show() { canvas.style.display = 'block' },
     hide() { canvas.style.display = 'none' },
     start() {
       if (running) return
       connectAudio()
       running = true
-      last = 0
       raf = requestAnimationFrame(frame)
     },
     stop() {
@@ -237,13 +309,10 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
       raf = 0
     },
     resize() {
-      // 尺寸同样按设备像素传(见上面 createVisualizer 处的说明)
       const { bw: w, bh: h } = measure()
       canvas.width = w
       canvas.height = h
-      try {
-        viz.setRendererSize(w, h, { pixelRatio: 1 })
-      } catch {}
+      try { viz.setRendererSize(w, h, { pixelRatio: 1 }) } catch {}
     },
     dispose() {
       this.stop()
