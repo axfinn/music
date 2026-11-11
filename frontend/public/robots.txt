@@ -1,0 +1,23 @@
+# music 是私人曲库，不对搜索引擎与自动化程序开放。
+# 请勿抓取页面、接口、音频、封面或歌词；内容也不用于模型训练。
+User-agent: *
+Disallow: /
+
+User-agent: GPTBot
+User-agent: ChatGPT-User
+User-agent: OAI-SearchBot
+User-agent: CCBot
+User-agent: ClaudeBot
+User-agent: anthropic-ai
+User-agent: Google-Extended
+User-agent: Bytespider
+User-agent: PetalBot
+User-agent: Baiduspider
+User-agent: bingbot
+User-agent: YisouSpider
+User-agent: Sogou Spider
+User-agent: 360Spider
+User-agent: SemrushBot
+User-agent: AhrefsBot
+User-agent: DotBot
+Disallow: /

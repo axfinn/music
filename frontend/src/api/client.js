@@ -5,6 +5,8 @@
  * 沉浸播放页甚至直接裸 fetch —— 错误文案、Cookie 携带、状态码处理四种写法。
  * 现在统一在这里：
  *   - 管理会话是 HttpOnly Cookie，所有请求一律带 credentials: 'same-origin'
+ *   - 每个请求都带 X-Music-Client: web，供后端反爬中间件识别「自家前端」；
+ *     音频 / 封面由 <audio>、<img> 直接发起，不带这个头，走浏览器 UA 通道
  *   - 失败统一抛 ApiError，带 status / missing / 后端原始 data
  *   - 后端没给 error 文案时按状态码兜底，页面不会显示 "undefined"
  *
@@ -54,7 +56,13 @@ export function json(payload, method = 'POST') {
 export async function request(path, { method = 'GET', body, headers, signal, credentials = 'same-origin' } = {}) {
   let res
   try {
-    res = await fetch(path, { method, body, headers, signal, credentials })
+    res = await fetch(path, {
+      method,
+      body,
+      headers: { 'X-Music-Client': 'web', ...headers },
+      signal,
+      credentials,
+    })
   } catch (e) {
     if (e?.name === 'AbortError') throw e
     throw new ApiError('网络连接异常，请稍后重试', { cause: e })

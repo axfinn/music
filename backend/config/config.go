@@ -22,17 +22,24 @@ const (
 	DefaultSiteDescription = "私人曲库与歌词档案：上传、流式播放、行级歌词检索与发现流。"
 	DefaultSiteBaseURL     = "https://music.jaxiu.cn"
 	DefaultAPIKeyRateLimit = 60
+
+	// 匿名访客的读取额度（次 / 分钟 / IP）。分级是为了让「翻页听歌」
+	// 依然顺畅，但「一次拉走整个曲库」的批量接口被单独卡住。
+	DefaultAntiCrawlReadRate   = 180
+	DefaultAntiCrawlBulkRate   = 40
+	DefaultAntiCrawlStreamRate = 300
 )
 
 // Config 全局配置。
 type Config struct {
-	Server  ServerConfig `yaml:"server"`
-	DataDir string       `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
-	Admin   AdminConfig  `yaml:"admin"`
-	Site    SiteConfig   `yaml:"site"`
-	Music   MusicConfig  `yaml:"music"`
-	Lyrics  LyricsConfig `yaml:"lyrics"`
-	API     APIConfig    `yaml:"api"`
+	Server   ServerConfig   `yaml:"server"`
+	DataDir  string         `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
+	Admin    AdminConfig    `yaml:"admin"`
+	Site     SiteConfig     `yaml:"site"`
+	Music    MusicConfig    `yaml:"music"`
+	Lyrics   LyricsConfig   `yaml:"lyrics"`
+	API      APIConfig      `yaml:"api"`
+	Security SecurityConfig `yaml:"security"`
 }
 
 // AdminConfig 后台管理口令。
@@ -66,6 +73,25 @@ type SiteConfig struct {
 type APIConfig struct {
 	KeyRateLimit int      `yaml:"key_rate_limit"` // 单密钥每分钟上限，默认 60
 	AllowOrigins []string `yaml:"allow_origins"`  // 空 = 允许任意来源
+}
+
+// SecurityConfig 反爬 / 防批量拖库设置。
+//
+// 这套防护只针对「匿名站内接口」：/api/v1/* 走 API Key 授权，属于被允许的
+// 程序化访问，不在这里拦；后台接口另有一层管理员会话。默认开启，
+// 需要对接脚本或做压测时可整体关掉，或把指定 UA 加进 allow_user_agents。
+type SecurityConfig struct {
+	// 总开关。关掉后只保留 robots.txt / noindex 这类声明式约定。
+	AntiCrawl bool `yaml:"anti_crawl"`
+
+	AnonymousReadRate int `yaml:"anonymous_read_rate"` // 普通读接口：次/分钟/IP，默认 180
+	BulkReadRate      int `yaml:"bulk_read_rate"`      // 全量/导出类接口：次/分钟/IP，默认 40
+	StreamRate        int `yaml:"stream_rate"`         // 音频与封面：次/分钟/IP，默认 300
+
+	// 额外要拦的 UA 片段（大小写不敏感），追加在内置黑名单之后。
+	BlockUserAgents []string `yaml:"block_user_agents"`
+	// 命中黑名单但仍要放行的 UA 片段，例如自家监控、备份脚本。
+	AllowUserAgents []string `yaml:"allow_user_agents"`
 }
 
 // MusicConfig 音乐库配置。
@@ -108,6 +134,12 @@ func DefaultConfig() *Config {
 			MaxConcurrent:  3,
 		},
 		API: APIConfig{KeyRateLimit: DefaultAPIKeyRateLimit},
+		Security: SecurityConfig{
+			AntiCrawl:         true,
+			AnonymousReadRate: DefaultAntiCrawlReadRate,
+			BulkReadRate:      DefaultAntiCrawlBulkRate,
+			StreamRate:        DefaultAntiCrawlStreamRate,
+		},
 	}
 }
 
@@ -129,7 +161,22 @@ func Load(path string) (*Config, error) {
 	migrateLegacyAdmin(cfg, raw)
 	migrateLegacyAPI(cfg, raw)
 	applyEnv(cfg)
+	normalizeSecurity(cfg)
 	return cfg, nil
+}
+
+// normalizeSecurity 把非法额度回填默认值。0 不解释成「不限流」——
+// 想彻底放开请显式写 anti_crawl: false，免得一个误配把曲库变成裸奔。
+func normalizeSecurity(cfg *Config) {
+	if cfg.Security.AnonymousReadRate <= 0 {
+		cfg.Security.AnonymousReadRate = DefaultAntiCrawlReadRate
+	}
+	if cfg.Security.BulkReadRate <= 0 {
+		cfg.Security.BulkReadRate = DefaultAntiCrawlBulkRate
+	}
+	if cfg.Security.StreamRate <= 0 {
+		cfg.Security.StreamRate = DefaultAntiCrawlStreamRate
+	}
 }
 
 // migrateLegacyAdmin 兼容旧配置项 lyrics.admin_password。
@@ -191,6 +238,7 @@ func LoadOrDefault(path string) *Config {
 		log.Printf("读取配置 %q 失败，已回退默认值: %v", path, err)
 		cfg = DefaultConfig()
 		applyEnv(cfg)
+		normalizeSecurity(cfg)
 	}
 	return cfg
 }
@@ -243,4 +291,42 @@ func applyEnv(cfg *Config) {
 			cfg.API.AllowOrigins = origins
 		}
 	}
+
+	// 反爬 / 防批量拖库。环境变量与 security 段一一对应，容器里不用挂配置文件。
+	if v := strings.TrimSpace(os.Getenv("ANTI_CRAWL")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Security.AntiCrawl = b
+		}
+	}
+	for _, item := range []struct {
+		env    string
+		target *int
+	}{
+		{"ANTI_CRAWL_READ_RATE", &cfg.Security.AnonymousReadRate},
+		{"ANTI_CRAWL_BULK_RATE", &cfg.Security.BulkReadRate},
+		{"ANTI_CRAWL_STREAM_RATE", &cfg.Security.StreamRate},
+	} {
+		if v := os.Getenv(item.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*item.target = n
+			}
+		}
+	}
+	if v := os.Getenv("ANTI_CRAWL_BLOCK_UA"); v != "" {
+		cfg.Security.BlockUserAgents = splitList(v)
+	}
+	if v := os.Getenv("ANTI_CRAWL_ALLOW_UA"); v != "" {
+		cfg.Security.AllowUserAgents = splitList(v)
+	}
+}
+
+// splitList 把逗号分隔的环境变量拆成去空白的非空片段。
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

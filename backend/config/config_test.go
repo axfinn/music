@@ -175,3 +175,59 @@ func TestAPIConfigFromEnv(t *testing.T) {
 		t.Fatalf("逗号分隔的 origin 应去掉空格: %v", cfg.API.AllowOrigins)
 	}
 }
+
+// ── 反爬 / 防批量拖库配置 ──
+// 默认必须是「开启」：这是私人曲库，漏配一个开关就等于全库裸奔。
+
+func TestSecurityDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if !cfg.Security.AntiCrawl {
+		t.Fatal("反爬默认应开启")
+	}
+	if cfg.Security.AnonymousReadRate != DefaultAntiCrawlReadRate ||
+		cfg.Security.BulkReadRate != DefaultAntiCrawlBulkRate ||
+		cfg.Security.StreamRate != DefaultAntiCrawlStreamRate {
+		t.Fatalf("分级限流默认值不对: %+v", cfg.Security)
+	}
+}
+
+func TestSecurityFromYAMLAndNormalized(t *testing.T) {
+	path := writeTemp(t, "security:\n  anti_crawl: false\n  bulk_read_rate: 3\n  stream_rate: 0\n  allow_user_agents: [\"my-monitor/1.0\"]\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Security.AntiCrawl {
+		t.Fatal("YAML 里显式关闭应生效")
+	}
+	if cfg.Security.BulkReadRate != 3 || len(cfg.Security.AllowUserAgents) != 1 {
+		t.Fatalf("security 段未生效: %+v", cfg.Security)
+	}
+	// 0 不能解释成「不限流」，否则一个误配就放开全库。
+	if cfg.Security.StreamRate != DefaultAntiCrawlStreamRate {
+		t.Fatalf("非法额度应回填默认值，实际 %d", cfg.Security.StreamRate)
+	}
+}
+
+func TestSecurityFromEnv(t *testing.T) {
+	t.Setenv("ANTI_CRAWL", "false")
+	t.Setenv("ANTI_CRAWL_BULK_RATE", "7")
+	t.Setenv("ANTI_CRAWL_BLOCK_UA", "my-scanner, another-bot")
+	t.Setenv("ANTI_CRAWL_ALLOW_UA", "my-monitor/1.0")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Security.AntiCrawl || cfg.Security.BulkReadRate != 7 {
+		t.Fatalf("反爬环境变量未生效: %+v", cfg.Security)
+	}
+	if len(cfg.Security.BlockUserAgents) != 2 || cfg.Security.BlockUserAgents[1] != "another-bot" {
+		t.Fatalf("UA 黑名单解析不对: %v", cfg.Security.BlockUserAgents)
+	}
+	if len(cfg.Security.AllowUserAgents) != 1 {
+		t.Fatalf("UA 白名单解析不对: %v", cfg.Security.AllowUserAgents)
+	}
+}

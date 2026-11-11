@@ -31,6 +31,20 @@ api:
   allow_origins: []            # 空 = 允许任意来源；收紧时写完整 Origin，例如：
                                #   ["https://music.jaxiu.cn", "https://app.example.com"]
 
+# ── 反爬 / 防批量拖库 ──
+# 私人曲库默认拒绝爬虫与脚本批量取数：robots.txt 全禁 + noindex 响应头 +
+# 拦截脚本类 UA + 匿名读接口按 IP 分级限流。开关对 /api/v1/*（API Key 授权通道）
+# 不生效：那是主动签发密钥允许的程序化访问，要停用请撤销密钥。
+security:
+  anti_crawl: true             # 总开关；false = 只保留 robots.txt / noindex 声明
+  anonymous_read_rate: 180     # 普通匿名读：次/分钟/IP（列表、详情、统计等）
+  bulk_read_rate: 40           # 全量/导出类：次/分钟/IP（snapshot、full=1、export）
+  stream_rate: 300             # 音频与封面：次/分钟/IP（Range 请求较频繁，单独放宽）
+  block_user_agents: []        # 追加要拦的 UA 片段，如 ["my-scanner"]
+  allow_user_agents: []        # 例外白名单（优先于黑名单），如 ["my-monitor/1.0"]
+# 对应环境变量：ANTI_CRAWL / ANTI_CRAWL_READ_RATE / ANTI_CRAWL_BULK_RATE /
+# ANTI_CRAWL_STREAM_RATE / ANTI_CRAWL_BLOCK_UA / ANTI_CRAWL_ALLOW_UA
+
 music:
   audio_max_bytes: 209715200   # 单曲上限 200MB
   cover_max_bytes: 15728640    # 封面上限 15MB

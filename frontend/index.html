@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#11141c" />
     <meta name="description" content="私人曲库与歌词档案：上传、流式播放、行级歌词检索与发现流。" />
+    <!-- 私人曲库不对搜索引擎开放；后端另发 X-Robots-Tag 与 /robots.txt。
+         三条同时存在是必要的：CDN 边缘会缓存 HTML，也可能剥掉响应头。 -->
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
 
     <!-- 静态兜底值：站点信息接口返回后会由 src/site.js 按配置覆盖。 -->
     <link rel="canonical" href="https://music.jaxiu.cn/" />

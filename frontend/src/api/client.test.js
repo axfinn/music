@@ -20,9 +20,18 @@ describe('request', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/music/tracks', {
       method: 'GET',
       body: undefined,
-      headers: undefined,
+      headers: { 'X-Music-Client': 'web' },
       signal: undefined,
       credentials: 'same-origin',
+    })
+  })
+
+  it('每个请求都带浏览器客户端标识，且保留业务自定义头', async () => {
+    const fetchMock = mockFetch(200, { ok: true })
+    await request('/api/music/tracks', { headers: { 'X-Custom': '1' } })
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      'X-Music-Client': 'web',
+      'X-Custom': '1',
     })
   })
 

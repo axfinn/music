@@ -106,6 +106,39 @@ python3 scripts/lyrics_finder.py 晴天 -a 周杰伦
 
 留空 = **纯访客模式**：后台接口一律 403，前端也不显示任何管理入口。
 
+## 反爬与数据保护
+
+私人曲库默认**不对搜索引擎和自动化程序开放**。实现集中在
+[`backend/middleware/anticrawl.go`](backend/middleware/anticrawl.go)，分三层：
+
+| 层 | 做法 | 挡住什么 |
+|---|---|---|
+| 声明 | `/robots.txt` 全站 `Disallow: /`；所有响应带 `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex`；`index.html` 里写等价 meta | 守规矩的爬虫与搜索引擎：不抓、不收录、不生成摘要 |
+| 识别 | 拦脚本 / 爬虫 / 无头浏览器 UA 与空 UA；匿名数据接口要求浏览器来源信号（`X-Music-Client: web` 或 `Sec-Fetch-*`）；拒绝 `Sec-Fetch-Site: cross-site` | `curl` / `wget` / `python-requests` / 通用扫描器 / 第三方站点跨域取数，直接 403 |
+| 限流 | 匿名读按 IP 分三档：普通 180、全量与导出 40、音频封面 300（次/分钟），另有全局兜底额度 | 即使伪装成浏览器，也无法在短时间内分页拖走整库 |
+
+全站 fetch 由 [`src/api/client.js`](frontend/src/api/client.js) 统一带 `X-Music-Client: web`；
+`<audio>` / `<img>` 直发请求走浏览器 UA 通道，播放与封面不受影响。
+
+**刻意不拦的部分**：`/api/health`（Docker 健康检查用 wget）、`/api/site`（前端启动拉品牌信息）
+与 OPTIONS 预检全部豁免；`/api/v1/*` 是管理员主动签发 API Key 允许的**程序化访问**，
+只受密钥鉴权与单密钥额度管控 —— 要停用请到后台「密钥管理」撤销密钥，而不是拦它的 UA；
+后台接口另有一层管理员会话门。
+
+配置写在 `security` 段，见 [`config.example.yaml`](config.example.yaml)。想让自家维护脚本
+继续访问又不想整体关掉，把脚本 UA 加进 `allow_user_agents` 即可。
+
+> **边界与部署注意**
+> - 代理链（EdgeOne → nginx → nps → 容器）必须把真实客户端 IP 透传为 `X-Forwarded-For`，
+>   否则所有访客共享同一份额度、正常用户也可能 429；建议在边缘用
+>   `proxy_set_header X-Forwarded-For $remote_addr;` 覆盖客户端自带的伪造值。
+> - EdgeOne 会缓存 HTML 且可能剥掉响应头，`noindex` 才同时写进 HTML meta。**发版后需在
+>   EdgeOne 控制台刷新 `/`、`/robots.txt`、`/index.html`、`/favicon.svg`**，否则边缘节点仍在发旧页面。
+> - 这套措施挡得住通用爬虫与批量脚本；伪造完整浏览器指纹的定向抓取仍能通过。
+>   要彻底禁止匿名取数，只能把曲库改成「登录后可见」——那会改变「访客可听歌」的定位。
+> - 想再加一层，可在 nginx / EdgeOne 配 UA 黑名单与速率限制，对 `/api/music/`、`/api/v1/`
+>   分别设阈值。
+
 ## 配置
 
 优先级：**环境变量 > `config.yaml` > 默认值**。完整示例见 [`config.example.yaml`](config.example.yaml)。
@@ -130,6 +163,14 @@ api:                        # 两套 v1 接口共用
   key_rate_limit: 60        # 单密钥每分钟上限
   allow_origins: []         # 空 = 允许任意来源
 
+security:                   # 反爬 / 防批量拖库，详见上一节
+  anti_crawl: true
+  anonymous_read_rate: 180  # 次/分钟/IP
+  bulk_read_rate: 40        # snapshot / full=1 / 大分页 / export
+  stream_rate: 300          # 音频与封面
+  block_user_agents: []
+  allow_user_agents: []
+
 music:
   audio_max_bytes: 209715200
   cover_max_bytes: 15728640
@@ -151,6 +192,8 @@ lyrics:
 | `ADMIN_PASSWORD` | 管理口令（旧名 `LYRICS_ADMIN_PASSWORD` 兼容） |
 | `SITE_NAME` / `SITE_TAGLINE` / `SITE_DESCRIPTION` / `SITE_BASE_URL` | 站点身份 |
 | `API_KEY_RATE_LIMIT` / `API_ALLOW_ORIGINS` | 对外接口限流与 CORS 白名单（逗号分隔） |
+| `ANTI_CRAWL` / `ANTI_CRAWL_READ_RATE` / `ANTI_CRAWL_BULK_RATE` / `ANTI_CRAWL_STREAM_RATE` | 反爬开关与三档匿名读额度 |
+| `ANTI_CRAWL_BLOCK_UA` / `ANTI_CRAWL_ALLOW_UA` | 追加拦截 / 放行的 UA 片段（逗号分隔） |
 
 > 旧配置里的 `lyrics.admin_password` / `lyrics.api_key_rate_limit` / `lyrics.allow_origins`
 > 会自动迁移到新位置，升级不需要改文件。`config.yaml` 与 `.env` 都已被 `.gitignore` 排除，

@@ -22,6 +22,13 @@ services:
       - SITE_BASE_URL=${SITE_BASE_URL:-}
       - API_KEY_RATE_LIMIT=${API_KEY_RATE_LIMIT:-}
       - API_ALLOW_ORIGINS=${API_ALLOW_ORIGINS:-}
+      # 反爬 / 防批量拖库；留空走 config.yaml 或内置默认值
+      - ANTI_CRAWL=${ANTI_CRAWL:-}
+      - ANTI_CRAWL_READ_RATE=${ANTI_CRAWL_READ_RATE:-}
+      - ANTI_CRAWL_BULK_RATE=${ANTI_CRAWL_BULK_RATE:-}
+      - ANTI_CRAWL_STREAM_RATE=${ANTI_CRAWL_STREAM_RATE:-}
+      - ANTI_CRAWL_BLOCK_UA=${ANTI_CRAWL_BLOCK_UA:-}
+      - ANTI_CRAWL_ALLOW_UA=${ANTI_CRAWL_ALLOW_UA:-}
     volumes:
       - ./data:/app/data
       # 如需自定义配置，取消下一行注释并准备 config.yaml
