@@ -77,17 +77,25 @@ export function hashOf(str) {
 
 /**
  * 无封面曲目的确定性艺术封面：同一首歌永远得到同一套配色。
- * 返回 CSS 可用的颜色与渐变，避免「一水儿灰色方块」的廉价感。
+ *
+ * 色相不再铺满 360°：曲库里四千多首都没有真实封面，整排高饱和的
+ * 紫/红/绿/青方块会显得很廉价。收敛到 14°~39° 的橙～琥珀暖色区间、
+ * 饱和度压到 30%~41%，和品牌色一致；仍按 seed 微调色相与明度，
+ * 保证不同曲目有区分度而不是一片死板的同色。
+ * hue 同时被整页氛围光当 fallback 用，改这里会连带把光晕也变暖。
  */
 export function toneFor(seed) {
-  const h = hashOf(seed) % 360
-  const h2 = (h + 42 + (hashOf(`b:${seed}`) % 60)) % 360
+  const h = 14 + (hashOf(seed) % 26)
+  const h2 = 8 + (hashOf(`b:${seed}`) % 22)
+  const s = 30 + (hashOf(`s:${seed}`) % 12)
+  const l1 = 52 + (hashOf(`l:${seed}`) % 8)
+  const l2 = 24 + (hashOf(`d:${seed}`) % 8)
   return {
     hue: h,
-    from: `hsl(${h} 62% 52%)`,
-    to: `hsl(${h2} 66% 28%)`,
-    soft: `hsl(${h} 58% 46%)`,
-    gradient: `linear-gradient(145deg, hsl(${h} 62% 54%) 0%, hsl(${h2} 64% 30%) 100%)`,
+    from: `hsl(${h} ${s}% ${l1}%)`,
+    to: `hsl(${h2} ${s + 6}% ${l2}%)`,
+    soft: `hsl(${h} ${s}% 44%)`,
+    gradient: `linear-gradient(145deg, hsl(${h} ${s}% ${l1}%) 0%, hsl(${h2} ${s + 8}% ${l2}%) 100%)`,
   }
 }
 

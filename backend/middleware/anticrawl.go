@@ -9,6 +9,10 @@
 // 由密钥鉴权 + 单密钥额度管控；要停用应撤销密钥，而不是在这里拦 UA。
 // 后台接口另有管理员会话门，不受访客可见性影响。
 //
+// 例外：security.trusted_domains 里的域（默认是站点主域，如 *.jaxiu.cn）
+// 完全跳过本文件的检查，方便同一主域下的自家站点接入。鉴权类门槛
+// （管理员会话、API Key）不受影响。
+//
 // 边界：这能挡住守规矩的爬虫、通用扫描器和批量脚本；伪造完整浏览器指纹的
 // 定向抓取仍可通过。真要彻底禁止匿名取数，只能把曲库改成登录后可见。
 package middleware
@@ -89,6 +93,7 @@ type AntiCrawlOptions struct {
 	StreamRate        int
 	BlockUserAgents   []string
 	AllowUserAgents   []string
+	TrustedDomains    []string
 }
 
 // AntiCrawl 持有三档限流器与 UA 规则，进程内复用同一个实例。
@@ -99,8 +104,9 @@ type AntiCrawl struct {
 	stream  *RateLimiter
 	global  *RateLimiter // 防伪造 X-Forwarded-For 绕过单 IP 额度的兜底
 
-	block []string
-	allow []string
+	block   []string
+	allow   []string
+	trusted []string
 
 	blocked atomic.Uint64 // 拦截计数，用于日志采样
 }
@@ -126,9 +132,10 @@ func NewAntiCrawl(opts AntiCrawlOptions) *AntiCrawl {
 		stream:  NewRateLimiter(stream, time.Minute),
 		// 全局额度取普通读的 20 倍：正常访客量用不到，
 		// 但即使有人靠伪造 XFF 换 IP，也拖不走整库。
-		global: NewRateLimiter(read*20, time.Minute),
-		block:  normalizePatterns(append(append([]string(nil), builtinBlockedUA...), opts.BlockUserAgents...)),
-		allow:  normalizePatterns(opts.AllowUserAgents),
+		global:  NewRateLimiter(read*20, time.Minute),
+		block:   normalizePatterns(append(append([]string(nil), builtinBlockedUA...), opts.BlockUserAgents...)),
+		allow:   normalizePatterns(opts.AllowUserAgents),
+		trusted: normalizePatterns(opts.TrustedDomains),
 	}
 	return a
 }
@@ -141,6 +148,56 @@ func normalizePatterns(in []string) []string {
 		}
 	}
 	return out
+}
+
+// TrustedOrigin 判断一个 Origin 是否属于可信域（含子域）。
+// 供 v1 的 CORS 共用，避免两处各写一套后缀匹配。
+func TrustedOrigin(origin string, domains []string) bool {
+	return matchTrustedDomain(origin, domains)
+}
+
+// TrustedRequest 判断请求是否来自可信域。
+// 带 Origin 的 fetch/XHR 用 Origin；<audio>/<img> 不发 Origin，退回 Referer。
+// Sec-Fetch-Site 由浏览器设置，明确 cross-site 的不算可信（防止头互相矛盾）。
+func TrustedRequest(c *gin.Context, domains []string) bool {
+	if len(domains) == 0 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(c.GetHeader("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	if origin := c.GetHeader("Origin"); origin != "" && matchTrustedDomain(origin, domains) {
+		return true
+	}
+	if ref := c.GetHeader("Referer"); ref != "" && matchTrustedDomain(ref, domains) {
+		return true
+	}
+	return false
+}
+
+func matchTrustedDomain(raw string, domains []string) bool {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return false
+	}
+	if !strings.Contains(host, "://") {
+		host = "https://" + host
+	}
+	u, err := url.Parse(host)
+	if err != nil {
+		return false
+	}
+	host = strings.ToLower(u.Hostname())
+	if host == "" {
+		return false
+	}
+	for _, d := range domains {
+		d = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(d), "."))
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // NoIndex 是全局中间件：连 404、静态文件与音频流都打上禁止索引标记。
@@ -165,6 +222,12 @@ func RobotsTxt() gin.HandlerFunc {
 func (a *AntiCrawl) Guard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !a.enabled {
+			c.Next()
+			return
+		}
+		// 同一主域下的自家站点完全放行：UA、来源信号、跨站判断与限流都不走。
+		// 管理员会话 / API Key 等真正的鉴权仍在各自路由上，这里不动。
+		if TrustedRequest(c, a.trusted) {
 			c.Next()
 			return
 		}

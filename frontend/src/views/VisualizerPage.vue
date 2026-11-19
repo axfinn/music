@@ -189,6 +189,9 @@
               </svg>
               <em v-if="playerState.loopMode === 'one'" class="viz-badge">1</em>
             </button>
+            <button class="viz-btn small viz-rate" :class="{ active: playerState.playbackRate !== 1 }" :title="`倍速：${playerState.playbackRate}×（点击切换）`" aria-label="切换播放倍速" @click="cycleRate()">
+              <span>{{ rateLabel }}</span>
+            </button>
 
             <div class="viz-vol">
               <button class="viz-btn small" :title="playerState.volume > 0 ? '静音' : '取消静音'" @click="player.setVolume(playerState.volume > 0 ? 0 : 1)">
@@ -207,7 +210,7 @@
           </div>
 
           <p class="viz-tip">
-            空格 播放/暂停 · ←→ 快进 · ↑↓ 音量 · N/P 切歌 · [ ] 换预设 · R 随机 · A 自动 · L 字效 · F 全屏
+            空格 播放/暂停 · ←→ 快进 · ↑↓ 音量 · N/P 切歌 · S 倍速 · [ ] 换预设 · R 随机 · A 自动 · L 字效 · F 全屏
           </p>
         </div>
       </div>
@@ -249,7 +252,7 @@
 //   MusicVisualizer/milkdrop.js  ★ 默认画面:Butterchurn(MIT)+ 100 个 MilkDrop 社区预设
 //   MusicVisualizer/PresetBrowser.vue 预设库 UI(搜索/收藏/随机/自动轮换/画面调节)
 //   MusicVisualizer/engine.js + scenes.js  LAB:6 个自研场景,仅实验与 WebGL2 回退
-//   MusicVisualizer/lyricfx.js 3D 歌词/歌名点云(独立透明层,叠在任何画面之上)
+//   MusicVisualizer/lyricfx.js 3D 歌词点云(独立透明层;开源态字色跟随画面主色)
 //   MusicVisualizer/dj.js      打碟台效果链
 //
 // 三个必须守住的点:
@@ -392,8 +395,11 @@ async function loadLyrics(id) {
     return
   }
   try {
-    const data = await request(`/api/music/tracks/${id}`)
-    const text = data.item?.lyrics || ''
+    // 必须走 tracks/:id/lyrics：该接口会优先返回关联的歌词库正文，
+    // 没有关联才回落到曲目自带的 lyrics。直接读详情的 item.lyrics 会漏掉
+    // 所有「关联歌词库」的曲目（补词入库的歌正是这一种），沉浸页会一片空白。
+    const data = await request(`/api/music/tracks/${id}/lyrics`)
+    const text = data.text || ''
     lyricCache.set(id, text)
     if (track.value?.id === id) applyLyrics(text)
   } catch {
@@ -420,6 +426,15 @@ async function ensureMilk() {
     getAudioContext: player.getAudioContext,
     getAnalyser: player.getAnalyser,
     isMobile: isMobile.value,
+    // 每帧采样的画面主色:让 3D 歌词的字跟当前预设同色系,不再各染各的。
+    // milk 常比 lyricFx 先建(默认预设在 boot 里就加载),这时先记下来,
+    // 等用户开 3D 歌词时 initLyricFx 会立刻取最近一次的值。
+    // 默认关字效时不采样,别为没人看的效果付 drawImage 的开销
+    shouldSampleColor: () => lyricFxOn.value,
+    onFrameColor: hex => {
+      lastFrameColor.value = hex
+      lyricFx?.setFrameColor(hex)
+    },
   }).then(m => { milk = m; return m }).catch(() => null)
   return milkPromise
 }
@@ -599,6 +614,8 @@ function switchToLab(id) {
   ensureEngine()
   engine?.start()
   engine?.mountScene(id)
+  // 离开 MilkDrop 后不再有画面采样,字色退回站点配色
+  lyricFx?.setPalette(palette.value)
   if (isMobile.value) browserOpen.value = false
   flash()
   bumpUi()
@@ -632,6 +649,7 @@ const lyricStageRef = ref(null)
 // 默认关:首屏只让开源预设说话,自建字效不再盖住画面;也少一个 WebGL context。
 // 之前明确开过(存了 1)的用户不受影响。
 const lyricFxOn = ref(read(LYRIC_FX_STORAGE, '0') === '1')
+const lastFrameColor = ref('')   // 最近一次画面采样主色(开源态)
 let lyricFx = null
 let sentLine = null
 let sentTitle = null
@@ -659,7 +677,9 @@ function initLyricFx() {
     isMobile: isMobile.value,
   })
   if (!lyricFx) return
-  lyricFx.setPalette(palette.value)
+  // 开源态用最近一次画面主色上色;LAB 态(没有 MilkDrop 采样)退回站点配色
+  if (isOpenSource.value && lastFrameColor.value) lyricFx.setFrameColor(lastFrameColor.value)
+  else lyricFx.setPalette(palette.value)
   syncLyricText()
   if (lyricFxOn.value && !document.hidden) lyricFx.start()
 }
@@ -755,13 +775,22 @@ function switchPalette(id) {
   paletteId.value = id
   write(STORAGE.palette, id)
   engine?.setPalette(palette.value)
-  lyricFx?.setPalette(palette.value)
+  // 只有 LAB 态字色跟站点配色;开源态由画面主色接管,别手动覆盖
+  if (!isOpenSource.value) lyricFx?.setPalette(palette.value)
 }
 
 function cycleLoop() {
   const order = ['all', 'one', 'off']
   const idx = order.indexOf(playerState.loopMode)
   player.setLoopMode(order[(idx + 1) % order.length])
+}
+
+// 倍速与曲库播放面板共用全局状态；搓碟结束时 dj.js 会还原到这里选的档位
+const ratePresets = player.getRatePresets()
+const rateLabel = computed(() => `${playerState.playbackRate}×`)
+function cycleRate() {
+  const next = ratePresets.find(r => r > playerState.playbackRate + 1e-6) ?? ratePresets[0]
+  player.setRate(next)
 }
 function goBack() { router.push('/music') }
 
@@ -878,6 +907,8 @@ function onKeydown(e) {
     switchToOpen()
   } else if (key === 'l' || key === 'L') {
     toggleLyricFx()
+  } else if (key === 's' || key === 'S') {
+    cycleRate()
   } else if (key >= '1' && key <= '6') {
     const s = SCENE_LIST[Number(key) - 1]
     if (s) switchToLab(s.id)
@@ -1260,6 +1291,12 @@ onBeforeUnmount(() => {
 .viz-btn:active { transform: translateY(0) scale(0.96); }
 .viz-btn.small { width: 34px; height: 34px; color: rgba(255, 255, 255, 0.5); border-color: rgba(255, 255, 255, 0.08); }
 .viz-btn.small.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* 倍速按钮：胶囊形，容纳「0.75×」这类文字 */
+.viz-btn.viz-rate {
+  width: auto; min-width: 42px; padding: 0 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em; white-space: nowrap;
+}
 .viz-btn.play {
   width: 54px; height: 54px; margin: 0 6px;
   background: #fff; color: #08090d; border-color: transparent;
@@ -1344,7 +1381,9 @@ onBeforeUnmount(() => {
   .viz-cover { width: 38px; height: 38px; border-radius: 8px; }
   .viz-lyric { font-size: 12px; margin-top: 8px; }
   .viz-now { max-width: none; }
-  .viz-controls { justify-content: center; gap: 6px; }
+  /* 多了倍速按钮后按钮总宽可能超过窄屏，允许换行兜底而不是横向溢出 */
+  .viz-controls { justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .viz-btn.viz-rate { min-width: 36px; padding: 0 5px; font-size: 11px; }
   .viz-vol { margin-left: auto; }
   .viz-vol-slider { width: 56px; }
   .viz-tip { display: none; }

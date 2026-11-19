@@ -276,6 +276,12 @@ export function useMusicPlayback(store, { route, router, focusSearch } = {}) {
       case 'm': case 'M':
         toggleMute()
         break
+      case 's': case 'S': {
+        const presets = player.getRatePresets()
+        const next = presets.find(r => r > state.playbackRate + 1e-6) ?? presets[0]
+        player.setRate(next)
+        break
+      }
       case '/':
         e.preventDefault()
         focusSearch?.()

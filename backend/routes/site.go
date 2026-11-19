@@ -21,6 +21,7 @@ func RegisterSiteRoutes(api *gin.RouterGroup, cfg *config.Config) {
 			"description":   cfg.Site.Description,
 			"base_url":      cfg.Site.BaseURL,
 			"admin_enabled": cfg.Admin.Password != "",
+			"auth_enabled":  cfg.MailConfigured(), // 邮箱注册/登录是否可用（邮件服务已配齐）
 			"api": gin.H{
 				"music":     "/api/music",
 				"lyrics":    "/api/lyrics",

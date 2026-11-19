@@ -24,6 +24,31 @@ site:
 admin:
   password: ""                 # 可选的额外管理口令；留空=只用内置固定口令
 
+# ── 邮箱会员（注册 / 登录 / 找回）──
+# 会员与管理是两套身份：会员靠邮箱验证码注册登录，用于识别「你是谁」；
+# 管理靠上面的 admin.password 进后台。会员拿不到后台权限。
+# 只有 mail.client_id 与 mail.client_secret 都配置了，注册登录入口才会开放。
+auth:
+  enabled: true                # 总开关；false=关闭会员注册登录
+  code_ttl_minutes: 10         # 验证码有效期（分钟）
+  session_ttl_hours: 720       # 会员会话有效期（小时），默认 30 天
+  code_rate_limit: 3           # 同一邮箱每分钟最多发几次验证码
+
+# ── 发信服务（t.jaxiu.cn）──
+# client_credentials 换取 token 后调用 /send。
+# from 必须落在该业务的发件人白名单内，否则上游返回 403 from_not_allowed；
+# 填写前请先用控制台确认白名单地址，配错会导致验证码发不出去。
+mail:
+  base_url: "https://t.jaxiu.cn/api/mail/v1"
+  client_id: ""                # mt_xxx；强烈建议用环境变量 MAIL_CLIENT_ID 注入
+  client_secret: ""            # 密钥；只走服务端，绝不下发前端（用 MAIL_CLIENT_SECRET 注入）
+  from: "devtools@jaxiu.cn"    # 占位默认值，请改成白名单内的真实地址
+  from_name: "music"
+  timeout_seconds: 15
+# 对应环境变量：AUTH_ENABLED / AUTH_CODE_TTL_MINUTES / AUTH_SESSION_TTL_HOURS /
+# AUTH_CODE_RATE_LIMIT / MAIL_BASE_URL / MAIL_CLIENT_ID / MAIL_CLIENT_SECRET /
+# MAIL_FROM / MAIL_FROM_NAME / MAIL_TIMEOUT_SECONDS
+
 # ── 对外 /api/v1/* 公共设置 ──
 # 音乐与歌词两套 v1 接口共用同一把密钥、同一套 CORS 白名单与限流额度。
 api:
@@ -42,8 +67,12 @@ security:
   stream_rate: 300             # 音频与封面：次/分钟/IP（Range 请求较频繁，单独放宽）
   block_user_agents: []        # 追加要拦的 UA 片段，如 ["my-scanner"]
   allow_user_agents: []        # 例外白名单（优先于黑名单），如 ["my-monitor/1.0"]
+  # 完全放行的自家域名（含子域）：跳过反爬全部检查，CORS 也自动放行。
+  # 留空 = 从 site.base_url 派生主域（music.jaxiu.cn → jaxiu.cn）。
+  trusted_domains: []          # 如 ["jaxiu.cn", "other.example.com"]
 # 对应环境变量：ANTI_CRAWL / ANTI_CRAWL_READ_RATE / ANTI_CRAWL_BULK_RATE /
-# ANTI_CRAWL_STREAM_RATE / ANTI_CRAWL_BLOCK_UA / ANTI_CRAWL_ALLOW_UA
+# ANTI_CRAWL_STREAM_RATE / ANTI_CRAWL_BLOCK_UA / ANTI_CRAWL_ALLOW_UA /
+# ANTI_CRAWL_TRUSTED_DOMAINS
 
 music:
   audio_max_bytes: 209715200   # 单曲上限 200MB

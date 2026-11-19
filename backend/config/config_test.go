@@ -194,6 +194,46 @@ func TestSecurityDefaults(t *testing.T) {
 	}
 }
 
+func TestTrustedDomainsDefaultFollowSiteBaseURL(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if len(cfg.Security.TrustedDomains) != 1 || cfg.Security.TrustedDomains[0] != "jaxiu.cn" {
+		t.Fatalf("默认应信任站点主域 jaxiu.cn，实际 %v", cfg.Security.TrustedDomains)
+	}
+
+	t.Setenv("SITE_BASE_URL", "https://music.example.com")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if len(cfg.Security.TrustedDomains) != 1 || cfg.Security.TrustedDomains[0] != "example.com" {
+		t.Fatalf("换域名后信任域应跟着变，实际 %v", cfg.Security.TrustedDomains)
+	}
+}
+
+func TestTrustedDomainsFromYAMLAndEnv(t *testing.T) {
+	path := writeTemp(t, "security:\n  trusted_domains: [\"*.foo.cn\", \"https://bar.example.org/path\"]\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if len(cfg.Security.TrustedDomains) != 2 ||
+		cfg.Security.TrustedDomains[0] != "foo.cn" || cfg.Security.TrustedDomains[1] != "bar.example.org" {
+		t.Fatalf("YAML 可信域未规范化: %v", cfg.Security.TrustedDomains)
+	}
+
+	t.Setenv("ANTI_CRAWL_TRUSTED_DOMAINS", "demo.jaxiu.cn, other.example.com")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if len(cfg.Security.TrustedDomains) != 2 || cfg.Security.TrustedDomains[0] != "demo.jaxiu.cn" {
+		t.Fatalf("环境变量应覆盖 YAML: %v", cfg.Security.TrustedDomains)
+	}
+}
+
 func TestSecurityFromYAMLAndNormalized(t *testing.T) {
 	path := writeTemp(t, "security:\n  anti_crawl: false\n  bulk_read_rate: 3\n  stream_rate: 0\n  allow_user_agents: [\"my-monitor/1.0\"]\n")
 	cfg, err := Load(path)
@@ -229,5 +269,60 @@ func TestSecurityFromEnv(t *testing.T) {
 	}
 	if len(cfg.Security.AllowUserAgents) != 1 {
 		t.Fatalf("UA 白名单解析不对: %v", cfg.Security.AllowUserAgents)
+	}
+}
+
+func TestAuthAndMailFromEnv(t *testing.T) {
+	t.Setenv("AUTH_ENABLED", "false")
+	t.Setenv("AUTH_CODE_TTL_MINUTES", "5")
+	t.Setenv("AUTH_SESSION_TTL_HOURS", "48")
+	t.Setenv("MAIL_CLIENT_ID", "mt_test")
+	t.Setenv("MAIL_CLIENT_SECRET", "secret-test")
+	t.Setenv("MAIL_FROM", " sender@example.com ")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Auth.Enabled || cfg.Auth.CodeTTLMinutes != 5 || cfg.Auth.SessionTTLHours != 48 {
+		t.Fatalf("认证环境变量未生效: %+v", cfg.Auth)
+	}
+	if cfg.Mail.ClientID != "mt_test" || cfg.Mail.ClientSecret != "secret-test" {
+		t.Fatalf("邮件凭据未生效: %+v", cfg.Mail)
+	}
+	if cfg.Mail.From != "sender@example.com" {
+		t.Fatalf("发件人应去空白, got %q", cfg.Mail.From)
+	}
+	// AUTH_ENABLED=false 时，即使凭据齐全也不开放会员入口。
+	if cfg.MailConfigured() {
+		t.Fatal("AUTH_ENABLED=false 时不应开放会员认证")
+	}
+}
+
+func TestMailConfiguredRequiresCredentials(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.MailConfigured() {
+		t.Fatal("未配凭据时不应开放会员认证")
+	}
+	cfg.Mail.ClientID = "mt_x"
+	if cfg.MailConfigured() {
+		t.Fatal("只有 client_id 时不应开放")
+	}
+	cfg.Mail.ClientSecret = "s"
+	if !cfg.MailConfigured() {
+		t.Fatal("凭据齐全后应开放")
+	}
+}
+
+func TestAuthInvalidValuesFallback(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Auth.CodeTTLMinutes = -1
+	cfg.Auth.SessionTTLHours = 0
+	cfg.Mail.BaseURL = ""
+	normalizeAuth(cfg)
+	if cfg.Auth.CodeTTLMinutes != DefaultAuthCodeTTLMinutes || cfg.Auth.SessionTTLHours != DefaultAuthSessionTTLHours {
+		t.Fatalf("非法认证参数应回填默认值: %+v", cfg.Auth)
+	}
+	if cfg.Mail.BaseURL != DefaultMailBaseURL {
+		t.Fatalf("空 base_url 应回填默认值, got %q", cfg.Mail.BaseURL)
 	}
 }

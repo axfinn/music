@@ -205,18 +205,21 @@ cmd_update() {
   fi
 
   # 2. 用 git 短 sha 打标签，方便回滚。
-  #    工作区有未提交改动时 HEAD 不变，直接复用同名标签会覆盖正在运行的镜像，
-  #    让 rollback 无旧版可退；此时追加时间戳生成唯一标签，旧标签得以保留。
+  #    两种情况下同名标签会覆盖有价值的旧镜像，必须改用带时间戳的唯一标签：
+  #    a) HEAD 没变（工作区脏或重复发布），sha 与正在运行的标签相同；
+  #    b) 上次发布已用时间戳标签，而纯 sha 标签还留在本地指向更早的版本。
   if [[ -d .git ]]; then
-    local sha running_tag
+    local sha running_tag running_ref
     sha="$(git rev-parse --short HEAD 2>/dev/null || true)"
-    running_tag="$(current_image)"
-    running_tag="${running_tag##*:}"
+    running_ref="$(current_image)"
+    running_tag="${running_ref##*:}"
     if [[ -n "${sha}" ]]; then
       export MUSIC_TAG="${sha}"
-      if [[ "${sha}" == "${running_tag}" ]]; then
+      if [[ "${sha}" == "${running_tag}" ]] || \
+         { [[ "${running_ref}" != "${MUSIC_IMAGE}:${sha}" ]] && \
+           docker image inspect "${MUSIC_IMAGE}:${sha}" >/dev/null 2>&1; }; then
         export MUSIC_TAG="${sha}-$(date '+%Y%m%d-%H%M%S')"
-        warn "HEAD 未变（有未提交改动或重复发布），改用唯一标签：${MUSIC_IMAGE}:${MUSIC_TAG}"
+        warn "纯 sha 标签已被占用（HEAD 未变或指向旧版本），改用唯一标签：${MUSIC_IMAGE}:${MUSIC_TAG}"
       fi
       log "本次发布标签：${MUSIC_IMAGE}:${MUSIC_TAG}"
     fi

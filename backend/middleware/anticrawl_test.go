@@ -153,6 +153,51 @@ func TestGuardRejectsCrossSite(t *testing.T) {
 
 // 健康检查、站点信息、预检与 API Key 授权通道不能被误伤：
 // healthcheck 用的是 wget，v1 的合法调用方本来就是脚本。
+// 同一主域下的自家站点完全放行：连脚本 UA 和批量接口都不再被反爬拦。
+func TestGuardTrustedDomainsBypass(t *testing.T) {
+	opts := enabledAntiCrawlOptions()
+	opts.BulkReadRate = 1
+	opts.TrustedDomains = []string{"jaxiu.cn"}
+	r := antiCrawlRouter(opts)
+
+	scriptUA := map[string]string{"User-Agent": "curl/8.4.0", "Origin": "https://devtools.jaxiu.cn"}
+	for _, path := range []string{
+		"/api/music/tracks",
+		"/api/music/snapshot",
+		"/api/lyrics/export",
+	} {
+		if w := call(r, path, scriptUA); w.Code != http.StatusOK {
+			t.Errorf("可信域请求 %s 应放行，实际 %d", path, w.Code)
+		}
+	}
+	// 批量额度用尽后，普通访客仍被限流；可信域不受影响。
+	call(r, "/api/music/snapshot", webHeaders()) // 先消耗掉仅有的一次额度
+	if w := call(r, "/api/music/snapshot", webHeaders()); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("非可信域仍应受批量限流，实际 %d", w.Code)
+	}
+
+	// <audio> / <img> 不发 Origin，用 Referer 识别。
+	ref := map[string]string{"User-Agent": "curl/8.4.0", "Referer": "https://foo.jaxiu.cn/page"}
+	if w := call(r, "/api/music/stream/mus_1", ref); w.Code != http.StatusOK {
+		t.Fatalf("可信域 Referer 应放行音频，实际 %d", w.Code)
+	}
+
+	// 后缀必须是「.jaxiu.cn」，不能把 jaxiu.cn.evil.com 这样的域混进来。
+	impostor := map[string]string{
+		"User-Agent": testBrowserUA, "Origin": "https://jaxiu.cn.evil.com", "Sec-Fetch-Site": "cross-site",
+	}
+	if w := call(r, "/api/music/tracks", impostor); w.Code != http.StatusForbidden {
+		t.Fatalf("伪装域应被拒绝，实际 %d", w.Code)
+	}
+	// 浏览器明确说是跨站时，不与 Origin 头互相矛盾地放行。
+	contradiction := map[string]string{
+		"User-Agent": testBrowserUA, "Origin": "https://foo.jaxiu.cn", "Sec-Fetch-Site": "cross-site",
+	}
+	if w := call(r, "/api/music/tracks", contradiction); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-site 与可信 Origin 矛盾时应拦下，实际 %d", w.Code)
+	}
+}
+
 func TestGuardExemptPaths(t *testing.T) {
 	r := antiCrawlRouter(enabledAntiCrawlOptions())
 	wget := map[string]string{"User-Agent": "Wget/1.21"}

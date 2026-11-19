@@ -239,4 +239,73 @@ const quickActions = computed(() => [
   .rank-meta, .loved-meta { min-width: 0; }
   .rank-count { flex: none; }
 }
+
+/* ── 桌面宽屏首页 ──
+   手机上是「一列大卡片」节奏，宽屏直接照搬就会变成中间窄窄一条。
+   这里把 hero 放大成真正的主视觉，并把「最近添加」从横向滚动条
+   改成自适应网格铺满整列 —— 8 张封面自然分成两行，首屏下半部不再空。 */
+@media (min-width: 1241px) {
+  .library-home { gap: 32px; }
+
+  .hero {
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+    gap: 40px;
+    padding: 32px 38px;
+  }
+  .hero-body { gap: 12px; }
+  .hero-body h2 { font-size: clamp(34px, 3.4vw, 50px); }
+  .hero-body p { font-size: 15px; }
+  .hero-actions { gap: 12px; margin-top: 18px; }
+  .hero-play { height: 46px; padding: 0 26px; font-size: 15px; }
+  .hero-stats { gap: 20px; margin-top: 22px; font-size: 13px; }
+  .hero-stats strong { font-size: 18px; }
+
+  .quick-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  .quick { gap: 14px; padding: 16px 18px; }
+  .quick-icon { width: 44px; height: 44px; border-radius: 13px; }
+  .quick-text strong { font-size: 15px; }
+  .quick-text small { font-size: 12px; }
+  .quick-arrow { font-size: 17px; }
+
+  .shelf-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 20px;
+    overflow: visible;
+    padding: 2px 2px 6px;
+  }
+  .shelf-card { flex-basis: auto; min-width: 0; }
+  .shelf-title { margin-top: 10px; font-size: 14px; }
+  .shelf-sub { font-size: 12px; }
+  .shelf-skeleton {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 20px;
+  }
+  .skel-card { flex-basis: auto; height: auto; aspect-ratio: 1 / 1.18; }
+
+  .dual { gap: 20px; }
+  .rank, .loved { padding: 22px; }
+  .rank h3, .loved h3 { font-size: 19px; }
+  .rank-row, .loved-item { gap: 12px; padding: 9px 10px; }
+  .rank-no { width: 24px; font-size: 12px; }
+  .rank-meta strong, .loved-meta strong { font-size: 14px; }
+  .rank-meta small, .loved-meta small, .rank-count { font-size: 12px; }
+}
+
+/* 1241~1399 的窄桌面：主区只有 ~640px，300px 大封面会把文字挤成一条，
+   统计和按钮连着换行。缩一档封面、收紧留白，保持「标题—按钮—统计」三行节奏。 */
+@media (min-width: 1241px) and (max-width: 1399px) {
+  .hero { grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); gap: 24px; padding: 24px; }
+  .hero-body h2 { font-size: 34px; }
+  .hero-actions { gap: 9px; margin-top: 12px; }
+  .hero-play { height: 42px; padding: 0 20px; font-size: 14px; }
+  .hero-stats { gap: 16px; margin-top: 16px; font-size: 12px; }
+  .hero-stats strong { font-size: 16px; }
+  /* 4 列快捷卡在 ~640px 主区里会把标题截成「随…／我…」，改成 2 列 */
+  .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .quick { gap: 12px; padding: 13px 14px; }
+  .quick-icon { width: 40px; height: 40px; }
+  .quick-arrow { display: none; }
+}
 </style>

@@ -31,6 +31,14 @@ const routes = [
     component: () => import('../views/MusicLibraryPage.vue'),
   },
   {
+    // 歌单独立入口：与曲库共用同一个页面壳，只把初始 section 钉在歌单上。
+    // section 不写回偏好，用户回到 /music 仍是原来的视图。
+    path: '/playlists',
+    name: 'Playlists',
+    component: () => import('../views/MusicLibraryPage.vue'),
+    meta: { section: 'playlists' },
+  },
+  {
     path: '/music/visualizer',
     name: 'MusicVisualizer',
     component: () => import('../views/VisualizerPage.vue'),
@@ -53,6 +61,13 @@ const routes = [
     path: '/admin/login',
     name: 'AdminLogin',
     component: () => import('../views/AdminLogin.vue'),
+    meta: { immersive: true },
+  },
+  // 邮箱会员认证：登录 / 注册 / 找回三态。不显示顶栏，但允许滚动（手机键盘）。
+  {
+    path: '/login',
+    name: 'Auth',
+    component: () => import('../views/AuthPage.vue'),
     meta: { immersive: true },
   },
   { path: '/:pathMatch(.*)*', redirect: '/music' },

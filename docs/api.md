@@ -85,9 +85,13 @@
   `export` 归入批量档 40 次/分钟，流媒体与封面 300 次/分钟，超限返回 `429`。
 - `/api/health`、`/api/site`、预检 `OPTIONS` 豁免；`/api/v1/*` 不受 UA 规则约束，
   那里由 API Key 鉴权与单密钥额度管控（撤销密钥即可停用程序化访问）。
+- `security.trusted_domains` 中的域名及其子域**完全放行**（跳过反爬与限流，
+  CORS 也自动放行）；默认从 `site.base_url` 派生主域，本站为 `jaxiu.cn`。
+- `/api/music`、`/api/lyrics` 前缀另有历史遗留的 companion 跨站只读通道（CORS `*`），
+  不受来源信号检查，但仍受按 IP 的三档限流；新接入建议走 v1 + API Key，或让域名落在可信域里。
 
 配额可用 `security.anti_crawl` / `security.*_rate` 调整或整体关闭，
-自家维护脚本可加进 `security.allow_user_agents`。
+自家维护脚本可加进 `security.allow_user_agents`，自家域名可加进 `security.trusted_domains`。
 
 ### CORS
 
@@ -99,7 +103,8 @@ api:
 ```
 
 带 `Origin` 的请求会回 `Access-Control-Allow-Origin`；白名单外的来源不会回该头，浏览器即拦截。
-旧写法 `lyrics.allow_origins` 仍会自动迁移，但新配置请写 `api.allow_origins`。
+例外：`security.trusted_domains`（默认取站点主域，本站为 `jaxiu.cn`）及其子域始终放行，
+即使配了严格白名单。旧写法 `lyrics.allow_origins` 仍会自动迁移，但新配置请写 `api.allow_origins`。
 
 预检请求（`OPTIONS`）在鉴权**之前**就地返回 `204`，不会因为没带密钥而失败。
 
@@ -564,6 +569,8 @@ X-API-Key: lly_xxx
 | `GET` | `/api/music/snapshot` | 全量快照（带 `rev` 增量语义） |
 | `GET` | `/api/music/stream/:id` | 音频流（支持 Range） |
 | `GET` | `/api/music/cover/:id` | 封面图 |
+| `GET` | `/api/music/playlists` | 公开歌单列表（只给 `track_count`，不含曲目 ID） |
+| `GET` | `/api/music/playlists/:id` | 歌单详情（含按添加顺序排列的 `track_ids`） |
 
 ### 写入
 
@@ -591,6 +598,21 @@ X-API-Key: lly_xxx
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `POST` | `/api/music/maintenance/repair` | 音频文件体检：回填缺失 `filename`、报告无主文件（**不删**） |
+
+### 公开歌单写入（管理）
+
+歌单只存曲目引用，不复制元数据；删除曲目时会同步清掉所有歌单里的引用。
+访客自己的歌单存在浏览器 `localStorage`，不走服务端。
+
+| 方法 | 路径 | 请求体 | 说明 |
+|---|---|---|---|
+| `POST` | `/api/music/playlists` | `{name, description?, track_ids?}` | 创建；`name` 1~80 字，返回 `item` |
+| `PATCH` | `/api/music/playlists/:id` | `{name?, description?}` | 改名 / 改简介，返回 `item` |
+| `DELETE` | `/api/music/playlists/:id` | — | 删除歌单（不删曲目） |
+| `POST` | `/api/music/playlists/:id/tracks` | `{track_ids: []}` | 追加曲目（去重、过滤无效 ID），返回 `added` |
+| `DELETE` | `/api/music/playlists/:id/tracks/:trackId` | — | 从歌单移除一首 |
+
+`PATCH` / 追加 / 移除的单次批量上限为 500 首；单个歌单防御性上限 5000 首。
 
 ---
 

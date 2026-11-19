@@ -122,7 +122,8 @@ func TestV1CORS(t *testing.T) {
 	}
 
 	// 配了白名单就只放行名单里的 Origin。
-	strict := testV1Router(testV1API(60, "https://music.jaxiu.cn"))
+	strictAPI := testV1API(60, "https://music.jaxiu.cn")
+	strict := testV1Router(strictAPI)
 	w = serve(strict, http.MethodGet, "/data", map[string]string{
 		"Origin": "https://evil.example.com", "X-API-Key": "good-key",
 	})
@@ -134,6 +135,21 @@ func TestV1CORS(t *testing.T) {
 	})
 	if w.Header().Get("Access-Control-Allow-Origin") != "https://music.jaxiu.cn" {
 		t.Fatalf("白名单内的 Origin 应被放行: %v", w.Header())
+	}
+
+	// 配了严格白名单也不影响同主域的自家站点。
+	strictAPI.trusted = []string{"jaxiu.cn"}
+	w = serve(strict, http.MethodGet, "/data", map[string]string{
+		"Origin": "https://devtools.jaxiu.cn", "X-API-Key": "good-key",
+	})
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://devtools.jaxiu.cn" {
+		t.Fatalf("可信域 Origin 应被放行: %v", w.Header())
+	}
+	w = serve(strict, http.MethodGet, "/data", map[string]string{
+		"Origin": "https://jaxiu.cn.evil.com", "X-API-Key": "good-key",
+	})
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("伪装域不该被放行: %v", w.Header())
 	}
 }
 

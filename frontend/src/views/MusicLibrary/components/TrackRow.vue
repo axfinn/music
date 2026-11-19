@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import {
-  MoreFilled, Star, Document, Edit, Connection, Download, Delete, VideoPlay,
+  MoreFilled, Star, Document, Edit, Connection, Download, Delete, VideoPlay, CirclePlus,
 } from '@element-plus/icons-vue'
 import CoverArt from './CoverArt.vue'
 import { streamUrl } from '../api.js'
@@ -19,7 +19,7 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
   selectionMode: { type: Boolean, default: false },
 })
-const emit = defineEmits(['play', 'toggle-select', 'favorite', 'lyrics', 'edit', 'link', 'remove'])
+const emit = defineEmits(['play', 'toggle-select', 'favorite', 'lyrics', 'edit', 'link', 'remove', 'playlist'])
 
 const sub = computed(() => {
   const bits = [props.track.artist || '未知歌手']
@@ -42,7 +42,7 @@ function onCommand(cmd) {
     a.remove()
     return
   }
-  const map = { play: 'play', lyrics: 'lyrics', edit: 'edit', link: 'link', remove: 'remove' }
+  const map = { play: 'play', lyrics: 'lyrics', edit: 'edit', link: 'link', remove: 'remove', playlist: 'playlist' }
   if (map[cmd]) emit(map[cmd])
 }
 </script>
@@ -104,6 +104,7 @@ function onCommand(cmd) {
           <el-dropdown-menu>
             <el-dropdown-item command="play"><el-icon><VideoPlay /></el-icon>立即播放</el-dropdown-item>
             <el-dropdown-item command="lyrics"><el-icon><Document /></el-icon>查看歌词</el-dropdown-item>
+            <el-dropdown-item command="playlist" divided><el-icon><CirclePlus /></el-icon>加入歌单</el-dropdown-item>
             <el-dropdown-item v-if="isAdmin" command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item>
             <el-dropdown-item v-if="isAdmin" command="link"><el-icon><Connection /></el-icon>关联歌词库</el-dropdown-item>
             <el-dropdown-item command="download" divided><el-icon><Download /></el-icon>下载音频</el-dropdown-item>
@@ -178,5 +179,18 @@ export default { name: 'TrackRow' }
   .sub-dur { display: inline; }
   .cell-actions { opacity: 1; gap: 0; }
   .cell-actions .ml-icon-btn { width: 30px; height: 30px; }
+}
+
+@media (min-width: 1241px) {
+  .track-row {
+    grid-template-columns: 40px 52px minmax(0, 1fr) 90px 76px 96px;
+    gap: 16px;
+    min-height: 72px;
+    padding: 10px 16px 10px 8px;
+  }
+  .title { font-size: 15px; }
+  .sub { font-size: 13px; }
+  .idx, .cell-plays, .cell-duration { font-size: 13px; }
+  .cell-actions .ml-icon-btn { width: 38px; height: 38px; }
 }
 </style>

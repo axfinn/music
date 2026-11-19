@@ -174,12 +174,15 @@ export function createDjEngine({ player }) {
     const el = player.getAudioEl?.()
     if (!el) return
     if (r == null) {
+      // 还原到用户在播放器里选的倍速,而不是写死 1×。
+      // 条件也要跟目标值比:搓碟结束时若恰好停在 1.0,旧写法会漏还原到 1.5×。
+      const target = player.state?.playbackRate || 1
       if (scratching) {
         el.preservesPitch = true
         if ('webkitPreservesPitch' in el) el.webkitPreservesPitch = true
         scratching = false
       }
-      if (el.playbackRate !== 1) el.playbackRate = 1
+      if (Math.abs(el.playbackRate - target) > 0.001) el.playbackRate = target
       return
     }
     if (!scratching) {

@@ -46,6 +46,16 @@ function onBarUp(e) {
   if (state.duration) playback.player.seek(pct * state.duration)
 }
 
+// 倍速：在预设档位间循环切换，并同步给全局播放器（持久化到 localStorage）。
+// 用「找下一档更快」而不是 indexOf，这样即便 localStorage 里存着非预设值
+// （旧版本 / 手工改过）也不会从 -1 跳到 0.5× 这种突兀位置。
+const ratePresets = playback.player.getRatePresets()
+const rateLabel = computed(() => `${state.playbackRate}×`)
+function cycleRate() {
+  const next = ratePresets.find(r => r > state.playbackRate + 1e-6) ?? ratePresets[0]
+  playback.player.setRate(next)
+}
+
 function onFavorite() {
   if (currentTrack.value) store.toggleFavorite(currentTrack.value)
 }
@@ -111,6 +121,9 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
         </button>
         <button class="ml-icon-btn" title="下一首" aria-label="下一首" @click="playback.player.skipNext()">
           <el-icon :size="19"><ArrowRightBold /></el-icon>
+        </button>
+        <button class="ml-icon-btn np-rate" :class="{ active: state.playbackRate !== 1 }" :title="`倍速：${state.playbackRate}×（点击切换）`" aria-label="切换播放倍速" @click="cycleRate()">
+          <span class="rate-num">{{ rateLabel }}</span>
         </button>
         <button class="ml-icon-btn" :class="{ active: state.loopMode !== 'off' }" :title="`循环模式：${state.loopMode}`" aria-label="切换循环模式" @click="playback.cycleLoop()">
           <el-icon :size="16"><RefreshRight /></el-icon>
@@ -218,6 +231,10 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
   font-size: 9px; font-weight: 800; color: var(--ml-accent);
 }
 
+/* 倍速按钮：做成紧凑胶囊而非圆形图标，容纳「0.75×」这类文字 */
+.np-rate { width: auto; min-width: 34px; padding: 0 7px; border-radius: 999px; }
+.rate-num { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
 .np-volume { display: flex; align-items: center; gap: 7px; }
 .vol {
   flex: 1; height: 4px; appearance: none; -webkit-appearance: none;
@@ -303,11 +320,48 @@ function openQueue() { lyrics.openDrawer(currentTrack.value || nowPlaying.value,
   /* 只留 上一首 / 播放 / 下一首，随机与循环交给沉浸播放页 */
   .np-controls > :first-child, .np-controls > :last-child { display: none; }
   .np-controls .ml-icon-btn { width: 32px; height: 32px; }
+  /* 倍速按钮在手机上保持胶囊形，避免「0.75×」被压成圆点 */
+  .np-controls .np-rate { width: auto; min-width: 30px; padding: 0 5px; }
+  .np-rate .rate-num { font-size: 10px; }
   .np-play { width: 36px; height: 36px; margin: 0 2px; box-shadow: none; }
 
   .np-actions { grid-area: lyrics; display: block; padding: 0; border: 0; }
   /* 歌词按钮收成图标，队列入口在手机上让位 */
   .np-act { width: 34px; height: 34px; padding: 0; font-size: 0; justify-content: center; }
   .np-act:nth-child(2), .np-act .tab-count { display: none; }
+}
+
+/* 宽屏：播放面板与左右两栏齐平，不再是一张只有半屏高的孤零零小卡。
+   空态没有控件，可以让它撑满整列；底部留 96px 避开宠物浮窗和常驻播放条。 */
+@media (min-width: 1241px) {
+  .np {
+    gap: 12px; padding: 20px 18px;
+    /* 放大封面与控件后，原来给宠物浮窗预留的 300px 会把 max-height 压到
+       ~500px，底部的「歌词 / 队列」按钮直接被 overflow:hidden 裁掉。
+       宽屏把预留收窄，并允许纵向滚动兜底（放得下时不会出现滚动条）。 */
+    --np-pet-reserve: 120px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .np-art { width: min(100%, 216px); }
+  .np-title-row { gap: 6px; }
+  .np-meta h2 { flex: 1; min-width: 0; max-width: none; font-size: 21px; }
+  .np-title-row .ml-tag { flex-shrink: 0; white-space: nowrap; }
+  .np-meta p { font-size: 13px; }
+  .np-time, .rate-num, .vol-num { font-size: 11px; }
+  .np-act { height: 38px; font-size: 13px; }
+  .np-controls { gap: 6px; }
+  .np-play { width: 52px; height: 52px; }
+
+  .np--idle {
+    --np-pet-reserve: 0px;
+    min-height: calc(100dvh - var(--app-bar-h, 56px) - 96px - var(--player-bar-h, 0px));
+  }
+  .np-idle { gap: 14px; }
+  .idle-art { width: min(64%, 210px); }
+  .np-idle h3 { font-size: 23px; }
+  .np-idle p { max-width: 240px; font-size: 13px; }
+  .np-idle .ml-btn { height: 42px; font-size: 14px; }
+  .idle-keys { margin-top: 0; font-size: 11px; }
 }
 </style>

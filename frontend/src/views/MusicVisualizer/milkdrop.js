@@ -159,7 +159,7 @@ function supportsWebGL2() {
  * 创建 MilkDrop 渲染器。首次调用会下载引擎 chunk(预设包可与 UI 并行预取)。
  * 返回 null 表示环境不支持(无 WebGL2 / 加载失败), 调用方应回退到 LAB 场景。
  */
-export async function createMilkdropEngine({ container, getAudioContext, getAnalyser, isMobile = false }) {
+export async function createMilkdropEngine({ container, getAudioContext, getAnalyser, isMobile = false, onFrameColor = null, shouldSampleColor = null }) {
   if (!supportsWebGL2()) return null
 
   let butterchurn, library
@@ -205,6 +205,62 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
   let running = false
   let currentKey = ''
   let warned = false
+
+  // ── 画面主色采样 ────────────────────────────────────────────
+  // 给叠在画面上的 3D 歌词用: 字的颜色跟着当前 MilkDrop 预设走, 而不是各染各的。
+  // 不读预设元数据(baseVals 里的 mv/wave 色大多数是灰的, 跟实际画面无关),
+  // 直接从渲染后的画布取真实像素。WebGL 画布在 render() 的同一次同步调用内
+  // drawImage 可读(不等下一次合成), 所以放在 frame() 里 render() 之后立刻采样。
+  // 缩到 32×18 + 每 ~12 帧一次, 这点开销可以忽略。
+  let colorCanvas = null
+  let colorCtx = null
+  let colorFrame = 0
+  let lastSentColor = ''
+
+  function averageColor() {
+    try {
+      if (!colorCanvas) {
+        colorCanvas = document.createElement('canvas')
+        colorCanvas.width = 32
+        colorCanvas.height = 18
+        colorCtx = colorCanvas.getContext('2d', { willReadFrequently: true })
+      }
+      colorCtx.drawImage(canvas, 0, 0, 32, 18)
+      const px = colorCtx.getImageData(0, 0, 32, 18).data
+      // 环形加权: 每个像素按"鲜艳度 × 亮度"投票, 这样中性灰背景不会把主色稀释掉,
+      // 亮而饱和的色块(预设的主体)才是词的取色来源。
+      let wx = 0, wy = 0, wz = 0, wsum = 0
+      for (let i = 0; i < px.length; i += 4) {
+        const r = px[i], g = px[i + 1], b = px[i + 2]
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b)
+        const v = mx / 255
+        const sat = mx === 0 ? 0 : (mx - mn) / mx
+        // 太暗的像素(黑底)不要, 太亮的近白像素(过曝高光)压权, 防止颜色被拉白
+        const w = Math.max(0, v - 0.12) * (0.25 + sat) * (1 - Math.max(0, v - 0.8) * 3)
+        if (w <= 0) continue
+        wx += r * w; wy += g * w; wz += b * w; wsum += w
+      }
+      if (wsum < 1) return null
+      let r = wx / wsum, g = wy / wsum, b = wz / wsum
+      // 归一化到统一亮度再提一点饱和: 不管预设整体明暗, 词的颜色都稳定可读。
+      const mx = Math.max(r, g, b) || 1
+      const scale = 210 / mx
+      r = Math.min(255, r * scale); g = Math.min(255, g * scale); b = Math.min(255, b * scale)
+      const hex = '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('')
+      return hex
+    } catch {
+      return null
+    }
+  }
+
+  function maybeSampleColor() {
+    if (!onFrameColor || (shouldSampleColor && !shouldSampleColor())) return
+    if (++colorFrame % 12) return
+    const hex = averageColor()
+    if (!hex || hex === lastSentColor) return
+    lastSentColor = hex
+    onFrameColor(hex)
+  }
 
   function connectAudio() {
     const analyser = getAnalyser()
@@ -253,6 +309,7 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
       // 不要传 elapsedTime: butterchurn 内部要自己累计 lastTime,
       // 传了就不会更新, 长时间播放会和真实时间脱节
       viz.render()
+      maybeSampleColor()
     } catch (err) {
       // 个别预设的 shader 在移动 GPU 上会编译失败: 只喊一次, 别刷屏
       if (!warned) {

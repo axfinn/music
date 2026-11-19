@@ -134,6 +134,24 @@ function onRootActivate(e) {
 .vinyl.playing img { animation: cover-spin 18s linear infinite; }
 @keyframes cover-spin { to { transform: rotate(360deg); } }
 
+/* 宽屏：占位封面统一成暖色低饱和后，把大首字从固定 92px 改成随封面
+   宽度缩放（容器查询），300px 的 hero 和 150px 的列表卡都不会显得突兀；
+   阴影也从冷黑改成暖棕。移动端保持原来的固定大字，观感不变。 */
+@media (min-width: 1241px) {
+  .cover-art {
+    container-type: inline-size;
+    box-shadow: 0 12px 30px rgba(72, 42, 20, 0.2);
+  }
+  .size-xl .art-letter { font-size: clamp(44px, 30cqw, 92px); }
+  .size-xl .art-note { font-size: 18px; }
+  .art-grain {
+    background:
+      radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.24), transparent 52%),
+      radial-gradient(circle at 82% 88%, rgba(0, 0, 0, 0.16), transparent 58%);
+  }
+  .art-disc { border-color: rgba(255, 255, 255, 0.16); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vinyl.playing img { animation: none; }
 }

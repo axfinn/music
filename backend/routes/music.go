@@ -33,6 +33,9 @@ func RegisterMusicRoutes(api *gin.RouterGroup, h *handlers.MusicHandler, limiter
 		m.POST("/tracks/:id/played", h.MarkPlayed)
 		// 收藏:「我喜欢的」是听歌时的顺手操作,访客可以点
 		m.POST("/tracks/:id/favorite", h.ToggleFavorite)
+		// 公开歌单:管理员发布,访客可查看并按单播放
+		m.GET("/playlists", h.ListPlaylists)
+		m.GET("/playlists/:id", h.GetPlaylist)
 
 		// ── 管理:改曲库 ──
 		adminM := admin.Middleware()
@@ -49,6 +52,12 @@ func RegisterMusicRoutes(api *gin.RouterGroup, h *handlers.MusicHandler, limiter
 		m.POST("/lyrics/auto-match", adminM, h.AutoMatchAllLyrics)
 		// 音频文件体检:回填缺失的 filename,报告无主文件(不删)
 		m.POST("/maintenance/repair", adminM, h.RepairFiles)
+		// 公开歌单的写操作(只有管理员能发布/改编)
+		m.POST("/playlists", limiter.Middleware(), adminM, h.CreatePlaylist)
+		m.PATCH("/playlists/:id", adminM, h.UpdatePlaylist)
+		m.DELETE("/playlists/:id", adminM, h.DeletePlaylist)
+		m.POST("/playlists/:id/tracks", adminM, h.AddPlaylistTracks)
+		m.DELETE("/playlists/:id/tracks/:trackId", adminM, h.RemovePlaylistTrack)
 	}
 
 	// 启动时后台跑一次体检,把历史 filename 为空/对不上的记录自动修好。

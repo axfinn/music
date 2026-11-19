@@ -163,4 +163,25 @@ const showGridToggle = computed(() => isBrowse.value)
   .controls .ml-btn .sel-count { position: absolute; transform: translate(12px, -12px); }
   .shuffle-btn { display: none; }
 }
+
+/* 宽屏：标题栏是页面主标题，不该还是一条 32px 高的小工具栏。 */
+@media (min-width: 1241px) {
+  .topbar { gap: 18px; padding: 22px 24px 20px; margin-bottom: 24px; }
+  .topbar-head h1 { font-size: 32px; }
+  .head-count { font-size: 14px; }
+  .controls { gap: 12px; }
+  .controls :deep(.el-input__wrapper),
+  .controls :deep(.el-select__wrapper) { min-height: 40px; }
+  .controls .ml-btn { height: 40px; }
+  /* 搜索框可伸缩：1440 这类中等宽度下所有控件仍能排进一行，
+     避免出现「三个一行 + 一个孤零零换行」的尴尬布局。 */
+  .search { flex: 1 1 240px; width: auto; min-width: 170px; max-width: 420px; }
+  .sort { flex: 0 0 150px; width: 150px; }
+}
+
+/* 1241~1399 主区偏窄：与其让「三个控件 + 一个孤零零的随机播放」换行，
+   不如明确分成「搜索独占一行 / 筛选按钮一行」两排，视觉上更整齐。 */
+@media (min-width: 1241px) and (max-width: 1399px) {
+  .search { flex: 1 1 100%; max-width: none; }
+}
 </style>

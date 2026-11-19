@@ -94,7 +94,9 @@ export function extractDominant(url) {
 export function paletteToCss(p, fallbackHue = 24) {
   const h = p?.h ?? fallbackHue
   const s = p?.s ?? 0.6
-  const hue2 = (h + 42) % 360
+  // 第二团光只偏 20°：占位封面收敛到暖橙后，+42° 会落到黄绿，
+  // 和暖棕封面、品牌橙并排时发脏。小偏移让整页氛围光保持同一色系。
+  const hue2 = (h + 20) % 360
   return {
     glowA: `hsla(${h} ${Math.round(s * 100)}% 55% / 0.34)`,
     glowB: `hsla(${hue2} ${Math.round(s * 88)}% 48% / 0.26)`,

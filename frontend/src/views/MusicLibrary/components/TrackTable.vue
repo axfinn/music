@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Star, Delete, Close, UploadFilled, Check } from '@element-plus/icons-vue'
+import { Star, Delete, Close, UploadFilled, Check, CirclePlus } from '@element-plus/icons-vue'
 import { useMusicContext } from '../context.js'
 import TrackRow from './TrackRow.vue'
 import CoverArt from './CoverArt.vue'
@@ -32,6 +32,8 @@ function isSelected(t) { return selected.value.has(t.id) }
 function onPlay(t) { playback.playTrack(t) }
 async function onFavorite(t) { await store.toggleFavorite(t) }
 function onLyrics(t) { lyrics.openDrawer(t) }
+function onPlaylist(t) { ui.openPlaylistPicker([t]) }
+function onBatchPlaylist() { ui.openPlaylistPicker(store.tracks.value.filter(t => selected.value.has(t.id))) }
 function onEdit(t) { ui.openEdit(t) }
 function onLink(t) { lyrics.openLink(t) }
 
@@ -83,6 +85,9 @@ onBeforeUnmount(() => observer?.disconnect())
         <button class="ml-btn ghost" @click="store.selectAll(shown.map(t => t.id))">全选当前</button>
         <button class="ml-btn ghost" @click="store.clearSelection()">清空</button>
         <div class="batch-spacer" />
+        <button class="ml-btn" :disabled="!selected.size" @click="onBatchPlaylist">
+          <el-icon :size="14"><CirclePlus /></el-icon><span class="hide-sm">加入歌单</span>
+        </button>
         <button class="ml-btn" :disabled="!selected.size" @click="onBatchFavorite(true)">
           <el-icon :size="14"><Star /></el-icon><span class="hide-sm">批量收藏</span>
         </button>
@@ -125,6 +130,10 @@ onBeforeUnmount(() => observer?.disconnect())
           <span v-if="selectionMode" class="gc-check" :class="{ on: isSelected(t) }" aria-hidden="true">
             <el-icon v-if="isSelected(t)" :size="12"><Check /></el-icon>
           </span>
+          <button
+            v-else class="gc-add ml-icon-btn" title="加入歌单" aria-label="加入歌单"
+            @click.stop="onPlaylist(t)"
+          ><el-icon :size="14"><CirclePlus /></el-icon></button>
           <span class="gc-title">{{ t.title }}</span>
           <span class="gc-sub">{{ t.artist || '未知歌手' }}</span>
           <span v-if="isCurrent(t) && state.isPlaying && !selectionMode" class="ml-eq gc-eq"><i /><i /><i /></span>
@@ -144,7 +153,7 @@ onBeforeUnmount(() => observer?.disconnect())
             :current="isCurrent(t)" :playing="state.isPlaying"
             :selected="isSelected(t)" :selection-mode="selectionMode"
             @play="onPlay(t)" @toggle-select="store.toggleSelect(t.id)"
-            @favorite="onFavorite(t)" @lyrics="onLyrics(t)"
+            @favorite="onFavorite(t)" @lyrics="onLyrics(t)" @playlist="onPlaylist(t)"
             @edit="onEdit(t)" @link="onLink(t)" @remove="onRemove(t)"
           />
         </div>
@@ -230,6 +239,13 @@ onBeforeUnmount(() => observer?.disconnect())
   backdrop-filter: blur(4px);
 }
 .gc-check.on { background: var(--ml-accent); border-color: var(--ml-accent); }
+.gc-add {
+  position: absolute; top: 14px; right: 14px; z-index: 2;
+  width: 28px; height: 28px;
+  background: rgba(8, 10, 16, 0.6); color: #fff;
+  opacity: 0; transition: opacity 0.16s ease;
+}
+.grid-card:hover .gc-add, .grid-card:focus-within .gc-add { opacity: 1; }
 .gc-title {
   margin-top: 6px; font-size: 13px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -250,8 +266,26 @@ onBeforeUnmount(() => observer?.disconnect())
   .table-head { display: none; }
   .grid-view { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
   .hide-sm { display: none; }
+  .gc-add { opacity: 1; width: 26px; height: 26px; top: 12px; right: 12px; }
   .batch-bar { gap: 3px; padding: 6px 8px; }
   .batch-bar .ml-btn { padding: 0 9px; }
   .empty { padding: 40px 16px; }
+}
+
+/* 宽屏：列表列宽与行高放大；table-head 与 TrackRow 的轨道必须同步改，
+   两边都在这里各写一份（分属不同 scoped 组件）。 */
+@media (min-width: 1241px) {
+  .table-head {
+    grid-template-columns: 40px 52px minmax(0, 1fr) 90px 76px 96px;
+    gap: 16px;
+    padding: 12px 16px 12px 10px;
+    font-size: 12px;
+  }
+  .list-view { padding: 10px; }
+  .rows { gap: 4px; padding-top: 6px; }
+  .grid-view { grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 20px; }
+  .grid-card { padding: 12px; }
+  .gc-title { font-size: 14px; }
+  .gc-sub, .gc-idx { font-size: 12px; }
 }
 </style>

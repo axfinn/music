@@ -20,6 +20,7 @@
 一个**可以单独部署的独立音乐站**：曲库是主体，访客打开就能听；歌词档案与歌词发现是站点的后台能力，登录后才能管理。
 
 - **曲库** — 上传本地音频，浏览器流式播放（Range）；管元数据、封面、歌词关联、收藏、播放次数。
+- **歌单** — 访客在浏览器里建本机歌单；管理员可发布公开歌单（落库，所有人可见可播）。歌单只存曲目引用，支持播放全部与加入队列。
 - **沉浸播放** — 全屏页默认跑开源 [Butterchurn](https://github.com/jberg/butterchurn)（MIT）与 100 个 MilkDrop 社区预设，支持搜索、收藏、随机、每曲/定时自动轮换与画面调节；自研 three.js 场景收在 LAB 折叠区，仅作实验与 WebGL2 不可用时的回退。
 - **歌词库** — 歌词档案：收录、检索（含**行级**检索：能回答"这句词出自哪首歌第几行"）、艺人聚合、高频词、摘句本、在线抓取。
 - **歌词发现** — 把本地库里的内容与在线抓取结果**融成一条探索流**，是"随便逛逛"的地方，而不是一个搜索框。在线抓取在后台跑、结果进内存候选池，首屏永远秒回。
@@ -97,6 +98,7 @@ python3 scripts/lyrics_finder.py 晴天 -a 周杰伦
 |---|---|---|
 | 进入方式 | 直接打开站点 | 右上角「管理入口」输入口令 |
 | 曲库 | 浏览、搜索、播放、沉浸播放、收藏、看当前这首的歌词 | 同上 |
+| 歌单 | 建/改/删本机歌单（仅存当前浏览器）；查看并播放公开歌单 | 同上 + 发布/编辑/删除公开歌单 |
 | 上传 / 改曲目 / 删曲目 / 换封面 / 关联歌词 | ✗ | ✓ |
 | 歌词库、歌词发现、密钥管理 | ✗ | ✓ |
 | 对外接口 `/api/v1/*` | 凭 API Key，与站内身份无关 | 同左 |
@@ -125,6 +127,13 @@ python3 scripts/lyrics_finder.py 晴天 -a 周杰伦
 与 OPTIONS 预检全部豁免；`/api/v1/*` 是管理员主动签发 API Key 允许的**程序化访问**，
 只受密钥鉴权与单密钥额度管控 —— 要停用请到后台「密钥管理」撤销密钥，而不是拦它的 UA；
 后台接口另有一层管理员会话门。
+
+**自家域名完全放行**：`security.trusted_domains` 里的域（含所有子域）跳过反爬的 UA、来源信号、
+跨站判断与限流，`/api/v1/*` 的 CORS 白名单也自动放行这些 Origin。默认从 `site.base_url`
+派生主域，本站即 `jaxiu.cn`，所以 `devtools.jaxiu.cn` 等站点可以直接跨域调用曲库接口。
+识别依据是浏览器发送的 `Origin`（fetch/XHR）或 `Referer`（`<audio>` / `<img>`），
+明确带 `Sec-Fetch-Site: cross-site` 的请求不算可信。放行只针对反爬，
+管理员会话与 API Key 这些真正的鉴权照旧生效。
 
 配置写在 `security` 段，见 [`config.example.yaml`](config.example.yaml)。想让自家维护脚本
 继续访问又不想整体关掉，把脚本 UA 加进 `allow_user_agents` 即可。
@@ -171,6 +180,7 @@ security:                   # 反爬 / 防批量拖库，详见上一节
   stream_rate: 300          # 音频与封面
   block_user_agents: []
   allow_user_agents: []
+  trusted_domains: []         # 留空 = 从 site.base_url 派生（本站为 jaxiu.cn）
 
 music:
   audio_max_bytes: 209715200
@@ -195,6 +205,7 @@ lyrics:
 | `API_KEY_RATE_LIMIT` / `API_ALLOW_ORIGINS` | 对外接口限流与 CORS 白名单（逗号分隔） |
 | `ANTI_CRAWL` / `ANTI_CRAWL_READ_RATE` / `ANTI_CRAWL_BULK_RATE` / `ANTI_CRAWL_STREAM_RATE` | 反爬开关与三档匿名读额度 |
 | `ANTI_CRAWL_BLOCK_UA` / `ANTI_CRAWL_ALLOW_UA` | 追加拦截 / 放行的 UA 片段（逗号分隔） |
+| `ANTI_CRAWL_TRUSTED_DOMAINS` | 完全放行的自家域名（含子域，逗号分隔）；留空自动取站点主域 |
 
 > 旧配置里的 `lyrics.admin_password` / `lyrics.api_key_rate_limit` / `lyrics.allow_origins`
 > 会自动迁移到新位置，升级不需要改文件。`config.yaml` 与 `.env` 都已被 `.gitignore` 排除，

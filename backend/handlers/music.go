@@ -960,6 +960,10 @@ func (h *MusicHandler) StreamTrack(c *gin.Context) {
 	c.Header("Content-Type", contentType)
 	c.Header("Accept-Ranges", "bytes")
 	c.Header("Cache-Control", "public, max-age=3600")
+	// 浏览器用 WebAudio(MediaElementAudioSourceNode)接管跨域音频时，
+	// 没有 CORS 许可的源会被静音。音频是无状态公开读，始终允许跨域，
+	// 这样 CDN 缓存的副本也一定带这个头，不依赖请求里有没有 Origin。
+	c.Header("Access-Control-Allow-Origin", "*")
 	http.ServeContent(c.Writer, c.Request, track.Filename, info.ModTime(), file)
 }
 

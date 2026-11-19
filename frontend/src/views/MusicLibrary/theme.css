@@ -272,6 +272,18 @@
 .ml-dialog .el-input__inner,
 .ml-dialog .el-textarea__inner { color: var(--ml-text); }
 
+/* ── 抽屉与全局顶部导航栏分层 ──
+   歌词 / 队列抽屉不 append-to-body，DOM 留在 .ml-app（isolation:isolate）里，
+   而 .app-bar 是它的外部兄弟且 z-index:30，会整条压在抽屉之上。
+   抽屉默认从 y=0 铺满视口，于是顶部 48px 的封面 / 标题 / 关闭按钮被顶栏切掉，
+   顶栏右侧的「支持 / 管理入口」又浮在白色抽屉上——两边互相覆盖。
+   把遮罩和抽屉一起下移到顶栏下沿：顶栏完整可见可点，抽屉内容也不再被压。
+   .el-overlay 自带 height:100%，只改 top 会溢出视口底部，必须同步改 height。 */
+.ml-drawer-overlay.el-overlay {
+  top: var(--app-bar-h, 48px);
+  height: calc(100% - var(--app-bar-h, 48px));
+}
+
 .ml-dialog, .ml-drawer {
   background: var(--ml-elevated);
   color: var(--ml-text);
@@ -330,6 +342,21 @@ html.ml-drawer-open .pet-root {
   /* Element 弹窗默认 50% 宽，手机上只有一百多像素；改成近全宽 */
   .ml-dialog { width: calc(100vw - 24px) !important; max-width: none !important; }
   .ml-dialog .el-dialog__body { padding-left: 14px; padding-right: 14px; }
+}
+
+/* ── 桌面宽屏字号体系 ──
+   现有的 10~13px 是按手机视口调的，直接拉宽到 1440/1920 会显得细碎。
+   这里统一把共享控件放大一号；组件自己 scoped 里的布局仍归各组件管。
+   断点 1241px 不与 max-width:1240px / 1080px / 768px 重叠，移动端零影响。 */
+@media (min-width: 1241px) {
+  :root { --ml-radius: 20px; --ml-radius-sm: 14px; }
+  .ml-eyebrow { font-size: 11px; letter-spacing: 0.2em; }
+  .ml-section-title { font-size: 22px; margin-bottom: 18px; }
+  .ml-section-title small { font-size: 13px; }
+  .ml-btn { height: 40px; padding: 0 18px; font-size: 14px; }
+  .ml-chip { height: 34px; padding: 0 15px; font-size: 13px; }
+  .ml-tag { font-size: 11px; }
+  .ml-kbd { min-width: 22px; height: 22px; font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

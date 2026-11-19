@@ -1,13 +1,13 @@
 <script setup>
 import { computed } from 'vue'
 import {
-  House, Headset, Clock, Star, FolderOpened, User,
-  UploadFilled, MagicStick, Connection, QuestionFilled,
+  House, Headset, Clock, Star, FolderOpened, User, List,
+  UploadFilled, MagicStick, Connection, QuestionFilled, Plus,
 } from '@element-plus/icons-vue'
 import { useMusicContext } from '../context.js'
 import { fmtDurationHuman, fmtCount, humanSize } from '../utils/format.js'
 
-const { store, playback, lyrics, upload, isAdmin } = useMusicContext()
+const { store, playback, lyrics, upload, ui, playlists, isAdmin } = useMusicContext()
 const { section, insights, loading } = store
 const { linkBusy } = lyrics
 
@@ -20,6 +20,7 @@ const browse = [
 ]
 const mine = [
   { key: 'favorites', label: '我喜欢的', icon: Star },
+  { key: 'playlists', label: '我的歌单', icon: List, count: () => playlists.items.value.length },
   { key: 'albums', label: '专辑', icon: FolderOpened },
   { key: 'artists', label: '歌手', icon: User },
 ]
@@ -29,6 +30,7 @@ const shortcuts = computed(() => [
   ['← →', '快退 / 快进 5 秒'],
   ['J / K', '下一首 / 上一首'],
   ['M', '静音切换'],
+  ['S', '切换播放倍速'],
   ['/', '聚焦搜索'],
 ])
 
@@ -72,10 +74,14 @@ const statsRows = computed(() => [
         <el-icon :size="17"><component :is="item.icon" /></el-icon>
         <span>{{ item.label }}</span>
         <span v-if="item.key === 'favorites'" class="nav-count">{{ insights.favorites }}</span>
+        <span v-else-if="item.count" class="nav-count">{{ item.count() }}</span>
       </button>
     </nav>
 
     <div class="side-actions">
+      <button class="ml-btn ghost new-playlist-btn" @click="ui.openPlaylistDialog()">
+        <el-icon :size="15"><Plus /></el-icon> 新建歌单
+      </button>
       <button v-if="isAdmin" class="ml-btn primary upload-btn" @click="upload.open()">
         <el-icon :size="15"><UploadFilled /></el-icon> 上传音乐
       </button>
@@ -242,5 +248,26 @@ const statsRows = computed(() => [
   .side-actions .ml-btn { width: auto; height: 34px; padding: 0 12px; }
   .side-actions .viz-btn { display: inline-flex; }
   .upload-btn { box-shadow: none; }
+}
+
+/* 宽屏：侧栏撑满视口高度，靠 .side-spacer 把统计与快捷键推到底部，
+   不再出现「半截白卡 + 下面一大片空」；品牌已在全局顶栏和页面标题栏
+   出现过两次，这里收掉第三层重复。 */
+@media (min-width: 1241px) {
+  .sidebar {
+    gap: 20px;
+    padding: 22px 18px 18px;
+    min-height: calc(100dvh - var(--app-bar-h, 56px) - 48px - var(--player-bar-h, 0px));
+  }
+  .brand { display: none; }
+  .nav-label { padding: 10px 12px 6px; font-size: 11px; }
+  .nav-item { height: 42px; gap: 12px; font-size: 14px; }
+  .nav-count { font-size: 12px; }
+  .side-actions .ml-btn { height: 42px; font-size: 14px; }
+  .match-btn { font-size: 13px; }
+  .stats-card { padding: 18px 16px; }
+  .stats-row { padding: 5px 0; font-size: 13px; }
+  .stats-row strong { font-size: 15px; }
+  .help-btn { font-size: 12px; }
 }
 </style>

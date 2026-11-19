@@ -10,6 +10,25 @@ function initialVolume() {
   return 1
 }
 
+// 倍速默认值与可选项：普通变速必须保持音高(preservesPitch),
+// 否则听感像「唐老鸭」；搓碟模式(dj.js)会临时关掉它。
+const RATE_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+const RATE_MIN = 0.25
+const RATE_MAX = 3
+function initialRate() {
+  try {
+    const r = parseFloat(localStorage.getItem('media_player_rate'))
+    if (isFinite(r) && r >= RATE_MIN && r <= RATE_MAX) return r
+  } catch {}
+  return 1
+}
+function clampRate(v) {
+  const n = Number(v)
+  if (!isFinite(n) || n <= 0) return 1
+  // 对齐到两位有效,避免 1.2500000001 这种浮点尾巴
+  return Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(n * 100) / 100))
+}
+
 const state = reactive({
   playlist: [],        // all playable items: { id, title, result_type, assetUrl, kind }
   currentIndex: -1,
@@ -20,6 +39,7 @@ const state = reactive({
   currentTime: 0,
   duration: 0,
   volume: initialVolume(),
+  playbackRate: initialRate(), // 1 = 原速,>1 快进,<1 慢放
   error: '',           // 最近一次播放失败的原因,播放成功后清空
 })
 
@@ -238,6 +258,10 @@ function createAudio(url) {
   sourceNode = null
   audioEl = new Audio(url)
   audioEl.volume = state.volume
+  // 切歌后保持用户选的倍速；普通变速保持音高（不破音）
+  audioEl.playbackRate = state.playbackRate
+  try { audioEl.preservesPitch = true } catch {}
+  try { audioEl.webkitPreservesPitch = true } catch {}
   audioEl.addEventListener('ended', onTrackEnded)
   audioEl.addEventListener('error', onAudioError)
   audioEl.addEventListener('loadedmetadata', onLoadedMetadata)
@@ -250,6 +274,23 @@ function setVolume(v) {
   state.volume = next
   if (audioEl) audioEl.volume = next
   try { localStorage.setItem('media_player_volume', String(next)) } catch {}
+}
+
+// 倍速播放：写入 state 让 UI 跟随，并立刻作用到当前 <audio>。
+// 保持音高（preservesPitch）以免人声变调；搓碟模式会临时覆盖此值再自行还原。
+function setRate(v) {
+  const next = clampRate(v)
+  state.playbackRate = next
+  if (audioEl) {
+    audioEl.playbackRate = next
+    try { audioEl.preservesPitch = true } catch {}
+    try { audioEl.webkitPreservesPitch = true } catch {}
+  }
+  try { localStorage.setItem('media_player_rate', String(next)) } catch {}
+}
+
+function getRatePresets() {
+  return RATE_PRESETS.slice()
 }
 
 // ── 随机列表:洗牌出一条固定乱序,按顺序走完整个列表不重不漏 ──
@@ -568,6 +609,8 @@ export function useMediaPlayer() {
     skipPrev,
     seek,
     setVolume,
+    setRate,
+    getRatePresets,
     setLoopMode,
     toggleShuffle,
     setShuffle,

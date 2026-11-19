@@ -81,4 +81,12 @@ const placeholder = (name) => ({ id: `group:${name}`, title: name })
   .cc-play { opacity: 1; transform: none; width: 36px; height: 36px; right: 8px; bottom: 8px; }
   .cc-meta { display: none; }
 }
+
+@media (min-width: 1241px) {
+  .collection-grid { grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 20px; }
+  .collection-card { padding: 14px; }
+  .cc-name { font-size: 15px; }
+  .cc-sub { font-size: 13px; }
+  .cc-meta { font-size: 12px; }
+}
 </style>

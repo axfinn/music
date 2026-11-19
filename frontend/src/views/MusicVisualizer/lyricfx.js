@@ -7,12 +7,16 @@
 //
 // 核心玩法(不是"歌词 + 背景歌名"两块静态字):
 //   只有**一套粒子**。它们的 A 位置是当前这句歌词,B 位置是这首歌的歌名。
-//   平时粒子待在歌词上、逐字随拍点跳动(按字序错峰,形成从左到右传的浪);
-//   每到副歌/固定拍数,粒子按拍点**逐批起飞**,飞过去把这句歌词重组成歌名,
-//   摆几拍再散回歌词。所以歌名是"歌词的字拼出来的",不是另画一层。
+//   绝大多数时间粒子待在歌词上、逐字随拍点轻轻跳(按字序错峰,形成从左到右的浪);
+//   隔很久(约 40 拍)才偶尔**逐批起飞**把歌词重组成歌名,摆两拍就散回 ——
+//   拼歌名只是点缀,歌词始终是可读的主角。
 //
 // 字还是点云:文字画进 canvas → 采样 alpha → 每像素一点。中文字体不用加载
 // typeface JSON;天然能炸开/重组;一行字一次 draw call。
+//
+// 观感约定(2026-11-16 重做):字用正常混合的实色,颜色 setFrameColor 跟随当前
+// MilkDrop 画面主色;不再用 additive + 柔光晕(那会在亮预设上过曝成一团白,
+// 和有机流动的 MilkDrop 格格不入)。字小、幅度小、节奏慢,是画面的注解。
 //
 // 节奏来源:直接读 useMediaPlayer 的 AnalyserNode(只读,不影响 engine 的 drive),
 // 没频谱时退化成 BPM 合成拍子,和 drive.js 同样的兜底思路。
@@ -32,11 +36,12 @@ const CAP_MOBILE = 6200
 const LYRIC_Y = 0.44
 const TITLE_Y = 0.28
 
-// 拼歌名的节拍编排
-const STEPS_UP = 4        // 4 拍拼齐
-const STEPS_DOWN = 2      // 2 拍散回歌词(歌词回来了要赶紧能看)
-const HOLD_BEATS = 3      // 拼齐后摆 3 拍
-const IDLE_BEATS = 10     // 散回后歇 10 拍再来一轮
+// 拼歌名的节拍编排。以前 IDLE 只有 10 拍,十几秒就炸开重组一次,像坏掉的循环动画;
+// 现在拉到 ~40 拍(约半分钟)才偶尔点缀一次,歌词绝大多数时间是稳定可读的主角。
+const STEPS_UP = 6        // 6 拍慢慢拼齐(更缓,不突兀)
+const STEPS_DOWN = 3      // 3 拍散回歌词
+const HOLD_BEATS = 2      // 拼齐后只摆 2 拍,不喧宾夺主
+const IDLE_BEATS = 40     // 散回后歇 ~40 拍再来一轮
 
 const VERT = /* glsl */ `
   attribute vec3 aTitle;     // 歌名里的落点
@@ -76,16 +81,15 @@ const VERT = /* glsl */ `
     vec3 c = mix(aCenter, aCTitle, m);
     float ch = mix(aCharL, aCharT, m);
 
-    // 飞行弧:中段抬起来 + 侧向散开,才像"飞过去"而不是线性插值
+    // 飞行弧:中段轻微抬起 + 侧向散开即可。原来的大开大合(纵深 ±1.1)太抢戏
     float arc = sin(m * 3.14159265);
-    // 纵深拉开:飞行中的粒子分在前后不同深度,点大小不同,才不会糊成一团白
-    p.y += arc * (0.14 + aRand * 0.55) + sin(arc * 3.4 + aRand * 6.28) * arc * 0.34;
-    p.x += arc * (aRand - 0.5) * 0.5;
-    p.z += arc * (fract(aRand * 7.31) - 0.5) * 2.2;
+    p.y += arc * (0.08 + aRand * 0.22) + sin(arc * 3.4 + aRand * 6.28) * arc * 0.14;
+    p.x += arc * (aRand - 0.5) * 0.24;
+    p.z += arc * (fract(aRand * 7.31) - 0.5) * 0.8;
 
-    // 换新一行歌词时,字从四周收拢落位(不是"啪"一下换掉)
+    // 换新一行歌词时,字从四周收拢落位(不是"啪"一下换掉) —— 收拢幅度收敛
     float pop = (1.0 - uFresh) * (1.0 - m);
-    p += (vec3(fract(aRand * 13.1), fract(aRand * 7.7), fract(aRand * 3.3)) - 0.5) * pop * 3.4;
+    p += (vec3(fract(aRand * 13.1), fract(aRand * 7.7), fract(aRand * 3.3)) - 0.5) * pop * 1.5;
 
     vec3 local = p - c;
 
@@ -94,36 +98,36 @@ const VERT = /* glsl */ `
     // 错峰 0.085s/字,一拍的浪从行首扫到行尾。
     float dtb = uTime - uBeatTime - ch * 0.085;
     float k = dtb > 0.0 ? exp(-dtb * 6.5) * sin(dtb * 12.0) : 0.0;
-    float amp = k * (0.2 + uBeat * 0.62);
+    float amp = k * (0.1 + uBeat * 0.3);
 
     // 刚体扰动:绕自己中心歪一下 + 纵向拉长 + 横向压窄,才是"跳"不是"整体平移"
     float flip = mix(-1.0, 1.0, step(0.5, fract(ch * 4.0 + aRand * 0.37)));
-    float ang = amp * 0.20 * flip;
+    float ang = amp * 0.16 * flip;
     float cs = cos(ang);
     float sn = sin(ang);
     local.xy = mat2(cs, -sn, sn, cs) * local.xy;
-    local.y *= 1.0 + amp * 0.34;
-    local.x *= 1.0 - amp * 0.14;
-    local.y += amp * 0.62;
+    local.y *= 1.0 + amp * 0.22;
+    local.x *= 1.0 - amp * 0.1;
+    local.y += amp * 0.42;
 
-    // 常时呼吸:幅度跟低频走,静止画面也有颗粒在动
+    // 常时呼吸:幅度跟低频走,静止画面也有颗粒在动 —— 幅度压小,不抢戏
     float ph = aRand * 6.2831;
-    local.x += sin(uTime * 1.2 + ph) * (0.004 + uBass * 0.012);
-    local.y += cos(uTime * 0.95 + ph * 1.7) * (0.005 + uBass * 0.014);
-    local.z += sin(uTime * 0.8 + ph * 0.6) * (0.01 + uBass * 0.03);
+    local.x += sin(uTime * 1.2 + ph) * (0.002 + uBass * 0.006);
+    local.y += cos(uTime * 0.95 + ph * 1.7) * (0.0025 + uBass * 0.007);
+    local.z += sin(uTime * 0.8 + ph * 0.6) * (0.006 + uBass * 0.014);
 
     vec3 pos = c + local;
 
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
 
-    float size = uSize * mix(uScaleL, uScaleT, m) * (0.7 + aRand * 0.85) * (1.0 + uBass * 0.42);
-    // 飞行中收小:一堆点挤在航线上时会叠成一整块亮斑
+    // 点更小、随低频涨得也更克制 —— 大颗粒满屏飘是"格格不入"的主因之一
+    float size = uSize * mix(uScaleL, uScaleT, m) * (0.62 + aRand * 0.66) * (1.0 + uBass * 0.18);
     gl_PointSize = size * (1.0 - 0.45 * arc) * uPixelScale / max(0.6, -mv.z);
 
-    // 亮度:高频闪烁;复制出来的点按份数摊薄,免得短句被叠成一团白
+    // 亮度:高频只做很轻的点缀(不再是明暗剧烈闪烁),复制点按份数摊薄
     float w = mix(aWL, aWT, m);
-    vGlow = (0.52 + aRand * 0.8) * (0.72 + uHigh * 1.0) * w * (1.0 - 0.62 * arc);
+    vGlow = (0.78 + aRand * 0.34) * (0.9 + uHigh * 0.28) * w * (1.0 - 0.45 * arc);
   }
 `
 
@@ -140,20 +144,20 @@ const FRAG = /* glsl */ `
   varying float vGlow;
 
   void main() {
-    // 圆形柔光点:核心实、边缘化开
+    // 圆形点:中心实、边缘化开。字形要清晰,所以中心给到接近实心。
     float d = length(gl_PointCoord - 0.5);
     if (d > 0.5) discard;
-    float a = smoothstep(0.5, 0.06, d);
-    a = a * a * 0.8 + smoothstep(0.26, 0.0, d) * 0.65;
+    float core = smoothstep(0.44, 0.08, d);
+    float a = core * core * 0.82 + smoothstep(0.3, 0.0, d) * 0.5;
 
     vec3 col = mix(uA, uB, vTint);
-    col = mix(col, uC, smoothstep(0.58, 1.0, vTint));
+    col = mix(col, uC, smoothstep(0.55, 1.0, vTint));
 
-    // 霓虹灯管:点中心推向白,边缘留纯色 —— 从"点阵字"变成"通电的灯管"
-    col = mix(col, vec3(1.0), smoothstep(0.34, 0.0, d) * 0.32);
+    // 字芯轻微推向白,保留一点"灯管"质感,但不像以前那样大面积过曝
+    col = mix(col, vec3(1.0), smoothstep(0.2, 0.0, d) * 0.16);
 
-    // additive 叠色:笔画密集处自己会过曝成亮芯,这就是没有 bloom 也有光的来源
-    gl_FragColor = vec4(col * (0.38 + vGlow * 0.58), a * uOpacity * clamp(vGlow * 1.1, 0.0, 1.2));
+    // 正常混合:笔画密集处不会叠白。vGlow 只做很轻的明暗起伏。
+    gl_FragColor = vec4(col * (0.82 + vGlow * 0.18), a * uOpacity * clamp(vGlow, 0.0, 1.0));
   }
 `
 
@@ -391,36 +395,22 @@ function createField({ cap, pointSize, opacity }) {
       uSize: { value: pointSize },
       uOpacity: { value: opacity },
     },
+    // 用正常混合,不再 additive:
+    //   additive 在明亮预设上会把字叠成一团白(过曝),和画面糊在一起。
+    //   正常混合下字是实色,颜色能跟着画面主色走,亮暗预设都清晰。
     transparent: true,
     depthTest: false,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
   })
 
   const points = new THREE.Points(geo, material)
   points.frustumCulled = false // buffer 按上限预分配,包围球没法信
 
-  // 柔光晕:同一份 geometry 再画一遍,点更大更淡 → additive 叠出霓虹感。
-  // 两个 draw call 换一整套 bloom composer,怎么算都划算。
-  const haloMaterial = new THREE.ShaderMaterial({
-    vertexShader: VERT_FIX,
-    fragmentShader: FRAG,
-    uniforms: {
-      ...material.uniforms,          // 浅拷贝:shared 里那几个仍是同一份引用
-      uSize: { value: pointSize * 2.3 },
-      uOpacity: { value: opacity * 0.34 },
-    },
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  })
-  const halo = new THREE.Points(geo, haloMaterial)
-  halo.frustumCulled = false
-  halo.renderOrder = -1
+  // 以前这里还有一层 additive 柔光晕 —— 它正是亮预设上过曝成一团白的元凶,
+  // 已去掉。霓虹质感改由片元里"字芯推向白、边缘留纯色"来做,不靠叠色。
 
   const group = new THREE.Group()
-  group.add(halo)
   group.add(points)
 
   // 源:两套字(归一化坐标,1 单位 = 一行字高)
@@ -524,7 +514,6 @@ function createField({ cap, pointSize, opacity }) {
     dispose() {
       geo.dispose()
       material.dispose()
-      haloMaterial.dispose()
     },
   }
 }
@@ -553,7 +542,8 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
 
   // 手机上一个页面已经有两块 WebGL(自研场景 + MilkDrop),粒子砍半,别抢 GPU
   const cap = isMobile ? CAP_MOBILE : CAP
-  const field = createField({ cap, pointSize: 0.075, opacity: 0.85 })
+  // 点更小、整体更淡:字是画面的注解,不是盖住 MilkDrop 的主角
+  const field = createField({ cap, pointSize: 0.05, opacity: 0.7 })
   const root = new THREE.Group()
   root.add(field.object)
   scene.add(root)
@@ -679,9 +669,9 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
   function fitScales() {
     const visH = 2 * camera.position.z * Math.tan((FOV * Math.PI) / 360)
     const visW = visH * camera.aspect
-    // 桌面右侧有一条 SCENE / MOOD 竖排面板(约 90px),字铺满整幅会钻到它底下
-    const usableL = visW * (isMobile ? 0.9 : 0.74)
-    const usableT = visW * (isMobile ? 0.88 : 0.84)
+    // 字只占画面中间一块(不再铺满),四周留给 MilkDrop 的画面发挥
+    const usableL = visW * (isMobile ? 0.76 : 0.5)
+    const usableT = visW * (isMobile ? 0.74 : 0.58)
     const L = field.lyric
     const T = field.title
     const nextL = L ? Math.min(1, usableL / L.width) : scaleL
@@ -737,6 +727,7 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
 
     fitScales()
 
+    easeColor(dt)
     const u = field.shared
     u.uTime.value = elapsed
     u.uBeatTime.value = beatTime
@@ -752,7 +743,7 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
   // 屏幕上这块字能占多宽(世界单位)
   function availableWidth() {
     const visH = 2 * camera.position.z * Math.tan((FOV * Math.PI) / 360)
-    return visH * camera.aspect * (isMobile ? 0.9 : 0.74)
+    return visH * camera.aspect * (isMobile ? 0.76 : 0.5)
   }
 
   // 一行放不下就折行:按"折行后每个字至少还有 0.55 单位高"反推每行字数。
@@ -822,11 +813,38 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     else fitScales()
   }
 
+  // ── 配色:目标色 + 每帧平滑 ─────────────────────────────────
+  // setPalette 来自站内配色方案( LAB 场景 / 手动切换 ),直接给三色。
+  // setFrameColor 来自当前 MilkDrop 画面采样,只给一个主色,这里派生出同系的
+  // 深浅三色 —— 字的颜色就跟画面是一个调色盘,不再各染各的。
+  const target = {
+    a: new THREE.Color('#6ee7d7'),
+    b: new THREE.Color('#4d9dff'),
+    c: new THREE.Color('#b07cff'),
+  }
+
   function setPalette(p) {
+    target.a.set(p.a)
+    target.b.set(p.b)
+    target.c.set(p.c)
+  }
+
+  function setFrameColor(hex) {
+    const base = new THREE.Color(hex)
+    const hsl = { h: 0, s: 0, l: 0 }
+    base.getHSL(hsl)
+    // 主色 → 亮一档 → 色相微移的邻色,保持同系但有余韵;限亮度别糊成白
+    target.a.setHSL(hsl.h, Math.min(0.85, hsl.s * 0.9 + 0.12), Math.min(0.72, hsl.l * 0.5 + 0.42))
+    target.b.setHSL(hsl.h, hsl.s, Math.min(0.68, hsl.l * 0.55 + 0.36))
+    target.c.setHSL((hsl.h + 0.045) % 1, Math.min(0.85, hsl.s * 0.95 + 0.08), Math.min(0.66, hsl.l * 0.5 + 0.4))
+  }
+
+  function easeColor(dt) {
+    const k = Math.min(1, dt * 2.2)
     const { uA, uB, uC } = field.shared
-    uA.value.set(p.a)
-    uB.value.set(p.b)
-    uC.value.set(p.c)
+    uA.value.lerp(target.a, k)
+    uB.value.lerp(target.b, k)
+    uC.value.lerp(target.c, k)
   }
 
   function start() {
@@ -863,6 +881,8 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     resize,
     setPointer,
     setPalette,
+    /** 用当前画面主色给字上色(从 MilkDrop 画布采样),会平滑过渡 */
+    setFrameColor,
     /** 换一行歌词;传空串 = 前奏/间奏,粒子散成歌名 */
     setLine: text => applyLine(text),
     /** 换歌名:粒子会把它拼出来亮个相 */

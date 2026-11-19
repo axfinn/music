@@ -74,10 +74,10 @@
     <div class="pz-fx-row">
       <button
         :class="{ on: lyricFxOn }"
-        :title="lyricFxOn ? '关闭自建 3D 歌词字效 (L)' : '开启自建 3D 歌词字效 (L)'"
+        :title="lyricFxOn ? '关闭 3D 歌词 (L)' : '开启 3D 歌词，字色跟随当前画面 (L)'"
         @click="$emit('toggle-lyric')"
-      ><span>3D 歌词字效</span><em>{{ lyricFxOn ? 'ON' : 'OFF' }}</em></button>
-      <small>L · 自建效果，默认关闭</small>
+      ><span>3D 歌词</span><em>{{ lyricFxOn ? 'ON' : 'OFF' }}</em></button>
+      <small>L · 字色跟随当前画面，默认关闭</small>
     </div>
 
     <details class="pz-fold" :open="toneOpen">

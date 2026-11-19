@@ -69,3 +69,12 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.24);
 }
+
+/* 桌面宽屏把常驻顶栏抬高 8px；--ml-sticky-top 由各页面引用，
+   会跟着变量一起把 sidebar / topbar / 播放面板的吸附位置下移，不会错位。 */
+@media (min-width: 1241px) {
+  :root {
+    --app-bar-h: 56px;
+    --ml-sticky-top: calc(var(--app-bar-h, 56px) + 14px);
+  }
+}

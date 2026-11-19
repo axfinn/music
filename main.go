@@ -16,6 +16,7 @@ import (
 
 	"github.com/axfinn/music/backend/config"
 	"github.com/axfinn/music/backend/handlers"
+	"github.com/axfinn/music/backend/mail"
 	"github.com/axfinn/music/backend/middleware"
 	"github.com/axfinn/music/backend/models"
 	"github.com/axfinn/music/backend/routes"
@@ -56,6 +57,7 @@ func main() {
 		StreamRate:        cfg.Security.StreamRate,
 		BlockUserAgents:   cfg.Security.BlockUserAgents,
 		AllowUserAgents:   cfg.Security.AllowUserAgents,
+		TrustedDomains:    cfg.Security.TrustedDomains,
 	})
 
 	// ── API ──
@@ -76,11 +78,24 @@ func main() {
 		// 后台登录/登出/会话查询。
 		routes.RegisterAdminRoutes(api, handlers.NewAdminHandler(admin))
 
+		// 邮箱会员：与管理员隔离的第二套身份，靠验证码注册/登录。
+		// 会话密钥取邮件服务的 client_secret（高熵、仅服务端持有）；
+		// 未配置邮件服务时功能不可用，但接口仍注册，前端据 /site 的 auth_enabled 决定显示。
+		mailer := mail.NewClient(&cfg.Mail)
+		sessionSeed := cfg.Mail.ClientSecret
+		if sessionSeed == "" {
+			sessionSeed = "music-member-unconfigured" // 占位：此时注册/发码都会被拒
+		}
+		member := middleware.NewMember(sessionSeed, time.Duration(cfg.Auth.SessionTTLHours)*time.Hour)
+		authHandler := handlers.NewAuthHandler(db, cfg, mailer, member)
+		routes.RegisterAuthRoutes(api, authHandler)
+
 		// 对外 v1 公共设施：音乐与歌词两套 v1 共用同一把密钥、CORS 与限流。
 		// 密钥表仍叫 lyric_api_keys（历史表名，不动生产库），但语义已是全站密钥。
 		apiV1 := middleware.NewV1API(middleware.V1APIOptions{
-			AllowOrigins: cfg.API.AllowOrigins,
-			KeyRateLimit: cfg.API.KeyRateLimit,
+			AllowOrigins:   cfg.API.AllowOrigins,
+			TrustedDomains: cfg.Security.TrustedDomains,
+			KeyRateLimit:   cfg.API.KeyRateLimit,
 			Verify: func(raw string) (middleware.APIKeyInfo, error) {
 				key, err := db.VerifyAPIKey(raw)
 				if err != nil {

@@ -18,6 +18,7 @@ import { useLibraryStore } from './MusicLibrary/composables/useLibraryStore.js'
 import { useMusicPlayback } from './MusicLibrary/composables/useMusicPlayback.js'
 import { useMusicLyrics } from './MusicLibrary/composables/useMusicLyrics.js'
 import { useMusicUpload } from './MusicLibrary/composables/useMusicUpload.js'
+import { usePlaylistStore } from './MusicLibrary/composables/usePlaylistStore.js'
 import { fmtTime } from './MusicLibrary/utils/format.js'
 import { useAdmin } from '../composables/useAdmin.js'
 
@@ -32,6 +33,9 @@ import TrackEditDialog from './MusicLibrary/components/TrackEditDialog.vue'
 import LyricLinkDialog from './MusicLibrary/components/LyricLinkDialog.vue'
 import LyricsDrawer from './MusicLibrary/components/LyricsDrawer.vue'
 import DropOverlay from './MusicLibrary/components/DropOverlay.vue'
+import PlaylistView from './MusicLibrary/components/PlaylistView.vue'
+import PlaylistDialog from './MusicLibrary/components/PlaylistDialog.vue'
+import PlaylistPicker from './MusicLibrary/components/PlaylistPicker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,19 +43,27 @@ const router = useRouter()
 const editDialog = ref(false)
 const editForm = ref(null)
 const selectionMode = ref(false)
+// 歌单弹窗全局挂一份：侧栏「新建歌单」、曲目行「加入歌单」都要能打开。
+const playlistDialog = ref(false)
+const playlistEdit = ref(null)
+const playlistPicker = ref(false)
+const pickerTracks = ref([])
 
 function focusSearch() {
   document.getElementById('ml-search')?.focus?.()
 }
 
-const store = useLibraryStore()
+const { isAdmin } = useAdmin()
+
+const store = useLibraryStore({ initialSection: route.meta?.section || '' })
 const playback = useMusicPlayback(store, { route, router, focusSearch })
 const lyrics = useMusicLyrics(store, playback)
 const upload = useMusicUpload(store)
+const playlists = usePlaylistStore(store, { isAdmin })
 
 // 访客只能听歌：上传/编辑/删除/关联歌词这些管理动作只对管理员显示。
 // 真正的拦截在后端（没有管理会话就是 403），前端隐藏只是不给访客看入口。
-const { isAdmin } = useAdmin()
+// 歌单例外：访客可以建本机歌单；公开歌单的写操作仍由后端管理门拦截。
 
 const ui = {
   editDialog, editForm, selectionMode, focusSearch,
@@ -73,9 +85,17 @@ const ui = {
     selectionMode.value = !selectionMode.value
     if (!selectionMode.value) store.clearSelection()
   },
+  openPlaylistDialog(p = null) {
+    playlistEdit.value = p
+    playlistDialog.value = true
+  },
+  openPlaylistPicker(tracks = []) {
+    pickerTracks.value = tracks.filter(Boolean)
+    if (pickerTracks.value.length) playlistPicker.value = true
+  },
 }
 
-provideMusicContext({ store, playback, lyrics, upload, ui, isAdmin })
+provideMusicContext({ store, playback, lyrics, upload, playlists, ui, isAdmin })
 
 const { section, facetFilter, facets, groups, visibleTracks, dimension, displayCount, displayDuration } = store
 const { ambient } = playback
@@ -96,6 +116,7 @@ function playGroup(g) { playback.playGroup(g) }
 
 onMounted(async () => {
   await store.load()
+  playlists.load()
   playback.handlePlayQuery()
 })
 // 整站 keep-alive：切页不触发 onBeforeUnmount，键盘监听必须随 activated 挂摘，
@@ -129,6 +150,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', playback.handleKeydo
         <LibraryTopbar />
 
         <LibraryHome v-if="section === 'discover'" />
+
+        <PlaylistView v-else-if="section === 'playlists'" />
 
         <template v-else>
           <div class="section-bar ml-card">
@@ -178,6 +201,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', playback.handleKeydo
       <TrackEditDialog />
       <LyricLinkDialog />
     </template>
+    <PlaylistDialog v-model="playlistDialog" :playlist="playlistEdit" />
+    <PlaylistPicker v-model="playlistPicker" :tracks="pickerTracks" />
     <LyricsDrawer />
     <DropOverlay />
   </div>
@@ -242,5 +267,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', playback.handleKeydo
   /* 迷你播放条已经 fixed，不占文档流；这里不要再设 display，
      否则会盖掉 .np 自己的 grid / .np--idle 的 display:none */
   .ml-shell > :last-child { order: 2; }
+}
+
+/* ── 桌面宽屏：让三栏真正撑开 ──
+   原来的 216 / 306 是照着窄笔记本定的，1920 屏上中间一列被夹着、
+   左右两栏只有半屏高，下半屏全是空白。宽屏放大列宽与间距，
+   同时把 sticky 的上下留白交给 global.css 的 --app-bar-h 统一算。 */
+@media (min-width: 1241px) {
+  .ml-shell {
+    max-width: 1800px;
+    grid-template-columns: 236px minmax(0, 1fr) 300px;
+    gap: 24px;
+    padding: 24px 30px 40px;
+  }
+  .ml-main { gap: 18px; }
+  .section-bar { gap: 16px; padding: 12px 18px; }
+  .sb-title { min-width: 130px; }
+  .sb-title strong { font-size: 17px; }
+  .sb-title span { font-size: 12px; }
+  .sb-play { height: 40px; }
+  .ml-foot { padding: 18px 6px 0; font-size: 12px; }
+}
+@media (min-width: 1700px) {
+  .ml-shell {
+    grid-template-columns: 248px minmax(0, 1fr) 320px;
+    gap: 28px;
+    padding: 28px 40px 48px;
+  }
 }
 </style>

@@ -30,14 +30,16 @@ const APIKeyContextKey = "v1_api_key"
 
 // V1APIOptions 构造对外接口公共设施所需的全部依赖。
 type V1APIOptions struct {
-	AllowOrigins []string
-	KeyRateLimit int
-	Verify       APIKeyVerifier
+	AllowOrigins   []string
+	TrustedDomains []string // 同一主域下的自家站点，不受 AllowOrigins 白名单限制
+	KeyRateLimit   int
+	Verify         APIKeyVerifier
 }
 
 // V1API 持有 CORS 白名单与按密钥计数的限流器（两个 v1 路由组共享同一实例）。
 type V1API struct {
 	origins []string
+	trusted []string
 	limit   int
 	verify  APIKeyVerifier
 	limiter *RateLimiter
@@ -51,6 +53,7 @@ func NewV1API(opts V1APIOptions) *V1API {
 	}
 	return &V1API{
 		origins: append([]string(nil), opts.AllowOrigins...),
+		trusted: append([]string(nil), opts.TrustedDomains...),
 		limit:   limit,
 		verify:  opts.Verify,
 		limiter: NewRateLimiter(limit, time.Minute),
@@ -74,6 +77,10 @@ func (v *V1API) CORS() gin.HandlerFunc {
 					allowed = origin
 					break
 				}
+			}
+			// 可信主域自动放行，即使管理员配了严格的 allow_origins。
+			if allowed == "" && TrustedOrigin(origin, v.trusted) {
+				allowed = origin
 			}
 		}
 		if allowed != "" {

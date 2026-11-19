@@ -166,3 +166,42 @@ describe('随机播放队列', () => {
     expect(player.state.error).toContain('连续多首')
   })
 })
+
+describe('倍速播放', () => {
+  it('setRate 写入 state 并作用到当前 <audio>', () => {
+    player.playAll(tracks(1), 0)
+    const el = player.getAudioEl()
+    player.setRate(1.5)
+    expect(player.state.playbackRate).toBe(1.5)
+    expect(el.playbackRate).toBe(1.5)
+  })
+
+  it('切歌后保持已选倍速,新元素也带上 rate', () => {
+    player.playAll(tracks(3), 0)
+    player.setRate(0.75)
+    const oldEl = player.getAudioEl()
+    player.skipNext()
+    const newEl = player.getAudioEl()
+    expect(newEl).not.toBe(oldEl)
+    expect(newEl.playbackRate).toBe(0.75)
+  })
+
+  it('非法或越界倍速被夹到合法范围', () => {
+    player.playAll(tracks(1), 0)
+    player.setRate(99)
+    expect(player.state.playbackRate).toBeLessThanOrEqual(3)
+    player.setRate(-2)
+    expect(player.state.playbackRate).toBeGreaterThanOrEqual(0.25)
+    player.setRate('abc')
+    expect(player.state.playbackRate).toBe(1)
+  })
+
+  it('预设档位循环切换,回到 1× 再往外走会 wrap', () => {
+    const presets = player.getRatePresets()
+    player.playAll(tracks(1), 0)
+    player.setRate(1)
+    const start = presets.indexOf(1)
+    player.setRate(presets[(start + 1) % presets.length])
+    expect(player.state.playbackRate).toBe(presets[(start + 1) % presets.length])
+  })
+})

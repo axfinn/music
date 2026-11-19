@@ -45,6 +45,24 @@ export function coverUrl(track) {
   return `${API}/cover/${encodeURIComponent(track.id)}?v=${v}`
 }
 
+/**
+ * 公开歌单（管理员发布）的网络层。访客自己的歌单在浏览器本地，见 usePlaylistStore.js。
+ * 读接口公开，写接口由后端管理会话拦截；前端隐藏入口只是体验，不是权限边界。
+ */
+export const playlistApi = {
+  list: () => request('/playlists').then(d => d.items || []),
+  detail: id => request(`/playlists/${encodeURIComponent(id)}`).then(d => d.item || null),
+  create: payload => request('/playlists', json(payload)).then(d => d.item),
+  update: (id, patch) =>
+    request(`/playlists/${encodeURIComponent(id)}`, json(patch, 'PATCH')).then(d => d.item),
+  remove: id => request(`/playlists/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  addTracks: (id, trackIds) =>
+    request(`/playlists/${encodeURIComponent(id)}/tracks`, json({ track_ids: trackIds }))
+      .then(d => Number(d.added || 0)),
+  removeTrack: (id, trackId) =>
+    request(`/playlists/${encodeURIComponent(id)}/tracks/${encodeURIComponent(trackId)}`, { method: 'DELETE' }),
+}
+
 export const musicApi = {
   async list({ keyword = '', fav = false, sort = 'created', limit = 100, offset = 0, withStats = false, signal } = {}) {
     const p = new URLSearchParams({ limit: String(limit), offset: String(offset), sort })

@@ -25,7 +25,7 @@ const MAX_TRACKS = 5000     // 防御性上限；后端单次 limit 上限 2000�
 const MAX_BATCH = 50        // 批量操作上限，避免误选几百首打出一片请求
 const PREFS_KEY = 'musiclib.prefs.v2'
 
-export const SECTIONS = ['discover', 'all', 'favorites', 'recent', 'albums', 'artists']
+export const SECTIONS = ['discover', 'all', 'favorites', 'recent', 'albums', 'artists', 'playlists']
 
 function readPrefs() {
   try {
@@ -43,8 +43,11 @@ function readPrefs() {
   }
 }
 
-export function useLibraryStore() {
+export function useLibraryStore({ initialSection = '' } = {}) {
   const prefs = readPrefs()
+  // /playlists 独立入口强制落在歌单视图；这个强制值不写回偏好，
+  // 免得用户回到 /music 时也被锁在歌单页。
+  const forcedSection = SECTIONS.includes(initialSection) ? initialSection : ''
 
   // ── 数据 ──
   const tracks = ref([])
@@ -60,7 +63,7 @@ export function useLibraryStore() {
   const keyword = ref('')
   const sortBy = ref(prefs.sortBy)
   const favOnly = ref(prefs.favOnly)
-  const section = ref(prefs.section)
+  const section = ref(forcedSection || prefs.section)
   const viewMode = ref(prefs.viewMode)
   const facetFilter = ref('')
   const selected = ref(new Set())
@@ -391,7 +394,7 @@ export function useLibraryStore() {
   watch([section, sortBy, favOnly, viewMode], () => {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify({
-        section: section.value, sortBy: sortBy.value,
+        section: forcedSection ? prefs.section : section.value, sortBy: sortBy.value,
         favOnly: favOnly.value, viewMode: viewMode.value,
       }))
     } catch { /* 无痕模式忽略 */ }

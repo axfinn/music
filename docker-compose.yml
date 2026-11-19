@@ -15,6 +15,17 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       # 可选的额外管理口令；留空则只用内置固定口令（后台始终可用）
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # 邮箱会员 / 发信服务；留空则会员注册登录入口不开放
+      - AUTH_ENABLED=${AUTH_ENABLED:-}
+      - AUTH_CODE_TTL_MINUTES=${AUTH_CODE_TTL_MINUTES:-}
+      - AUTH_SESSION_TTL_HOURS=${AUTH_SESSION_TTL_HOURS:-}
+      - AUTH_CODE_RATE_LIMIT=${AUTH_CODE_RATE_LIMIT:-}
+      - MAIL_BASE_URL=${MAIL_BASE_URL:-}
+      - MAIL_CLIENT_ID=${MAIL_CLIENT_ID:-}
+      - MAIL_CLIENT_SECRET=${MAIL_CLIENT_SECRET:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-}
+      - MAIL_TIMEOUT_SECONDS=${MAIL_TIMEOUT_SECONDS:-}
       # 站点身份 / 对外接口设置；留空时走 config.yaml 或内置默认值
       - SITE_NAME=${SITE_NAME:-}
       - SITE_TAGLINE=${SITE_TAGLINE:-}
@@ -29,6 +40,8 @@ services:
       - ANTI_CRAWL_STREAM_RATE=${ANTI_CRAWL_STREAM_RATE:-}
       - ANTI_CRAWL_BLOCK_UA=${ANTI_CRAWL_BLOCK_UA:-}
       - ANTI_CRAWL_ALLOW_UA=${ANTI_CRAWL_ALLOW_UA:-}
+      # 完全放行的自家域名（含子域），逗号分隔；留空时从 SITE_BASE_URL 派生主域
+      - ANTI_CRAWL_TRUSTED_DOMAINS=${ANTI_CRAWL_TRUSTED_DOMAINS:-}
     volumes:
       - ./data:/app/data
       # 如需自定义配置，取消下一行注释并准备 config.yaml

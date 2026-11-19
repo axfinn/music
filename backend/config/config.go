@@ -8,6 +8,7 @@ package config
 
 import (
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,15 @@ const (
 	DefaultSiteBaseURL     = "https://music.jaxiu.cn"
 	DefaultAPIKeyRateLimit = 60
 
+	// 邮箱会员：验证码有效期 10 分钟，会员会话 30 天。
+	DefaultAuthCodeTTLMinutes  = 10
+	DefaultAuthSessionTTLHours = 30 * 24
+	// 发信服务 t.jaxiu.cn 的默认地址与占位发件人。
+	DefaultMailBaseURL  = "https://t.jaxiu.cn/api/mail/v1"
+	DefaultMailFrom     = "devtools@jaxiu.cn"
+	DefaultMailFromName = "music"
+	DefaultMailTimeout  = 15
+
 	// 匿名访客的读取额度（次 / 分钟 / IP）。分级是为了让「翻页听歌」
 	// 依然顺畅，但「一次拉走整个曲库」的批量接口被单独卡住。
 	DefaultAntiCrawlReadRate   = 180
@@ -36,10 +46,37 @@ type Config struct {
 	DataDir  string         `yaml:"data_dir"` // 音频/封面/SQLite 根目录，默认 ./data
 	Admin    AdminConfig    `yaml:"admin"`
 	Site     SiteConfig     `yaml:"site"`
+	Auth     AuthConfig     `yaml:"auth"`
+	Mail     MailConfig     `yaml:"mail"`
 	Music    MusicConfig    `yaml:"music"`
 	Lyrics   LyricsConfig   `yaml:"lyrics"`
 	API      APIConfig      `yaml:"api"`
 	Security SecurityConfig `yaml:"security"`
+}
+
+// AuthConfig 邮箱会员认证。
+//
+// 会员与管理是两套身份：会员靠邮箱验证码注册/登录，用于识别「你是谁」；
+// 管理靠 admin 口令进后台。会员默认开启，只有配置了邮件服务才真正可用
+// （缺 client_id/secret 时发验证码会返回明确错误，不会静默失败）。
+type AuthConfig struct {
+	Enabled         bool `yaml:"enabled"`           // 总开关；false=关闭注册登录入口
+	CodeTTLMinutes  int  `yaml:"code_ttl_minutes"`  // 验证码有效期，默认 10
+	SessionTTLHours int  `yaml:"session_ttl_hours"` // 会员会话有效期，默认 720（30 天）
+	CodeRateLimit   int  `yaml:"code_rate_limit"`   // 同一邮箱每分钟最多发几次验证码，默认 3
+}
+
+// MailConfig 第三方发信服务（t.jaxiu.cn）。
+//
+// 用 client_credentials 换取 access_token 后调用 /send；
+// from 必须落在该业务的发件人白名单内，否则上游会拒信。
+type MailConfig struct {
+	BaseURL       string `yaml:"base_url"`        // 邮件 API 根地址
+	ClientID      string `yaml:"client_id"`       // mt_xxx
+	ClientSecret  string `yaml:"client_secret"`   // 密钥；只走服务端，不下发前端
+	From          string `yaml:"from"`            // 发件人地址，须在白名单内
+	FromName      string `yaml:"from_name"`       // 发件人显示名
+	TimeoutSecond int    `yaml:"timeout_seconds"` // 单次 HTTP 超时
 }
 
 // AdminConfig 后台管理口令。
@@ -92,6 +129,10 @@ type SecurityConfig struct {
 	BlockUserAgents []string `yaml:"block_user_agents"`
 	// 命中黑名单但仍要放行的 UA 片段，例如自家监控、备份脚本。
 	AllowUserAgents []string `yaml:"allow_user_agents"`
+
+	// 完全信任的域名：这些域（含子域）发起的请求跳过反爬检查，
+	// 并由 CORS 自动放行。留空时从 site.base_url 派生主域名。
+	TrustedDomains []string `yaml:"trusted_domains"`
 }
 
 // MusicConfig 音乐库配置。
@@ -128,6 +169,18 @@ func DefaultConfig() *Config {
 			Description: DefaultSiteDescription,
 			BaseURL:     DefaultSiteBaseURL,
 		},
+		Auth: AuthConfig{
+			Enabled:         true,
+			CodeTTLMinutes:  DefaultAuthCodeTTLMinutes,
+			SessionTTLHours: DefaultAuthSessionTTLHours,
+			CodeRateLimit:   3,
+		},
+		Mail: MailConfig{
+			BaseURL:       DefaultMailBaseURL,
+			From:          DefaultMailFrom,
+			FromName:      DefaultMailFromName,
+			TimeoutSecond: DefaultMailTimeout,
+		},
 		Music: MusicConfig{AudioMaxBytes: 200 << 20, CoverMaxBytes: 15 << 20},
 		Lyrics: LyricsConfig{
 			TimeoutSeconds: 45,
@@ -162,7 +215,42 @@ func Load(path string) (*Config, error) {
 	migrateLegacyAPI(cfg, raw)
 	applyEnv(cfg)
 	normalizeSecurity(cfg)
+	normalizeAuth(cfg)
 	return cfg, nil
+}
+
+// normalizeAuth 把非法的认证/邮件参数回填默认值。
+// 0/负数不解释成「永不过期」——那会让验证码和会话变成永久有效的后门。
+func normalizeAuth(cfg *Config) {
+	if cfg.Auth.CodeTTLMinutes <= 0 {
+		cfg.Auth.CodeTTLMinutes = DefaultAuthCodeTTLMinutes
+	}
+	if cfg.Auth.SessionTTLHours <= 0 {
+		cfg.Auth.SessionTTLHours = DefaultAuthSessionTTLHours
+	}
+	if cfg.Auth.CodeRateLimit <= 0 {
+		cfg.Auth.CodeRateLimit = 3
+	}
+	cfg.Mail.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Mail.BaseURL), "/")
+	if cfg.Mail.BaseURL == "" {
+		cfg.Mail.BaseURL = DefaultMailBaseURL
+	}
+	cfg.Mail.From = strings.TrimSpace(cfg.Mail.From)
+	if cfg.Mail.From == "" {
+		cfg.Mail.From = DefaultMailFrom
+	}
+	if strings.TrimSpace(cfg.Mail.FromName) == "" {
+		cfg.Mail.FromName = DefaultMailFromName
+	}
+	if cfg.Mail.TimeoutSecond <= 0 {
+		cfg.Mail.TimeoutSecond = DefaultMailTimeout
+	}
+}
+
+// MailConfigured 邮件服务是否已配齐（能真正发出验证码）。
+// 前端用它决定要不要显示注册/登录入口，避免给出必然失败的表单。
+func (cfg *Config) MailConfigured() bool {
+	return cfg.Auth.Enabled && cfg.Mail.ClientID != "" && cfg.Mail.ClientSecret != ""
 }
 
 // normalizeSecurity 把非法额度回填默认值。0 不解释成「不限流」——
@@ -177,6 +265,58 @@ func normalizeSecurity(cfg *Config) {
 	if cfg.Security.StreamRate <= 0 {
 		cfg.Security.StreamRate = DefaultAntiCrawlStreamRate
 	}
+	if cfg.Security.TrustedDomains == nil {
+		if d := registrableDomain(cfg.Site.BaseURL); d != "" {
+			cfg.Security.TrustedDomains = []string{d}
+		}
+	}
+	cfg.Security.TrustedDomains = normalizeDomains(cfg.Security.TrustedDomains)
+}
+
+// registrableDomain 从站点地址取出主域名（music.jaxiu.cn → jaxiu.cn）。
+// 只对常见的二级公共后缀做特判，够覆盖自用域名，不引入完整 publicsuffix 表。
+func registrableDomain(raw string) string {
+	host := strings.ToLower(strings.TrimSpace(raw))
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	labels := strings.Split(strings.Trim(host, "."), ".")
+	if len(labels) < 2 {
+		return ""
+	}
+	if _, err := strconv.Atoi(labels[len(labels)-1]); err == nil {
+		return "" // IP，不是域名
+	}
+	start := len(labels) - 2
+	if len(labels) >= 3 && len(labels[len(labels)-1]) == 2 {
+		switch labels[len(labels)-2] {
+		case "co", "com", "net", "org", "gov", "edu", "ac":
+			start = len(labels) - 3
+		}
+	}
+	return strings.Join(labels[start:], ".")
+}
+
+// normalizeDomains 把域名/Origin/带通配符的写法统一成小写域名，并去重。
+func normalizeDomains(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, d := range in {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if u, err := url.Parse(d); err == nil && u.Hostname() != "" {
+			d = u.Hostname()
+		}
+		d = strings.Trim(strings.TrimPrefix(d, "*."), ".")
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 // migrateLegacyAdmin 兼容旧配置项 lyrics.admin_password。
@@ -239,6 +379,7 @@ func LoadOrDefault(path string) *Config {
 		cfg = DefaultConfig()
 		applyEnv(cfg)
 		normalizeSecurity(cfg)
+		normalizeAuth(cfg)
 	}
 	return cfg
 }
@@ -317,6 +458,49 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ANTI_CRAWL_ALLOW_UA"); v != "" {
 		cfg.Security.AllowUserAgents = splitList(v)
+	}
+	if v := os.Getenv("ANTI_CRAWL_TRUSTED_DOMAINS"); v != "" {
+		cfg.Security.TrustedDomains = splitList(v)
+	}
+
+	// 邮箱会员认证与发信服务。
+	if v := strings.TrimSpace(os.Getenv("AUTH_ENABLED")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Auth.Enabled = b
+		}
+	}
+	for _, item := range []struct {
+		env    string
+		target *int
+	}{
+		{"AUTH_CODE_TTL_MINUTES", &cfg.Auth.CodeTTLMinutes},
+		{"AUTH_SESSION_TTL_HOURS", &cfg.Auth.SessionTTLHours},
+		{"AUTH_CODE_RATE_LIMIT", &cfg.Auth.CodeRateLimit},
+	} {
+		if v := os.Getenv(item.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*item.target = n
+			}
+		}
+	}
+	for _, item := range []struct {
+		env    string
+		target *string
+	}{
+		{"MAIL_BASE_URL", &cfg.Mail.BaseURL},
+		{"MAIL_CLIENT_ID", &cfg.Mail.ClientID},
+		{"MAIL_CLIENT_SECRET", &cfg.Mail.ClientSecret},
+		{"MAIL_FROM", &cfg.Mail.From},
+		{"MAIL_FROM_NAME", &cfg.Mail.FromName},
+	} {
+		if v := strings.TrimSpace(os.Getenv(item.env)); v != "" {
+			*item.target = v
+		}
+	}
+	if v := os.Getenv("MAIL_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Mail.TimeoutSecond = n
+		}
 	}
 }
 

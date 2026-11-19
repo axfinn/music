@@ -356,8 +356,19 @@ func (db *DB) IncrementMusicTrackPlayCount(id string) error {
 }
 
 func (db *DB) DeleteMusicTrack(id string) error {
-	_, err := db.conn.Exec(`DELETE FROM music_tracks WHERE id = ?`, id)
-	return err
+	// 曲目与歌单引用一起删，否则歌单详情会留下永远解析不到的幽灵 ID。
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM playlist_tracks WHERE track_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM music_tracks WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ── 歌词库联动 ──

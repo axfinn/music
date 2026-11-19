@@ -13,6 +13,7 @@ export const SITE_FALLBACK = {
   tagline: '独立音乐站',
   description: '私人曲库与歌词档案：上传、流式播放、行级歌词检索与发现流。',
   base_url: 'https://music.jaxiu.cn',
+  auth_enabled: false, // 邮箱注册/登录是否开放，由 /api/site 覆盖
 }
 
 let state = { ...SITE_FALLBACK }
@@ -76,6 +77,7 @@ export function loadSite() {
         tagline: data.tagline || state.tagline,
         description: data.description || state.description,
         base_url: data.base_url || state.base_url,
+        auth_enabled: !!data.auth_enabled,
       }
       applyDocumentMeta()
       setDocumentTitle()

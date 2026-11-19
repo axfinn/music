@@ -24,7 +24,14 @@ onBeforeUnmount(() => document.documentElement.classList.remove('ml-drawer-open'
 </script>
 
 <template>
-  <el-drawer v-model="drawerOpen" size="460px" class="ml-drawer" :with-header="false" direction="rtl">
+  <el-drawer
+    v-model="drawerOpen"
+    size="460px"
+    class="ml-drawer"
+    modal-class="ml-drawer-overlay"
+    :with-header="false"
+    direction="rtl"
+  >
     <div class="pane">
       <header class="pane-head">
         <CoverArt v-if="drawerTrack" :track="drawerTrack" size="lg" />
