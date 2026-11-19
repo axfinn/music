@@ -63,7 +63,7 @@
 
     <div class="pz-tools">
       <button title="上一个预设 ([)" @click="step(-1)">‹</button>
-      <button class="pz-random" title="随机抽一个已验证预设 (R)" @click="$emit('random')">随机</button>
+      <button class="pz-random" title="从全部预设随机抽一个 (R)" @click="$emit('random')">随机</button>
       <button title="下一个预设 (])" @click="step(1)">›</button>
       <button
         class="pz-auto" :class="{ on: autoMode !== 'off' }"
@@ -71,14 +71,31 @@
       >{{ autoLabel }}</button>
     </div>
 
+    <p class="pz-random-note">
+      随机从全部预设抽取，坏的会自动跳过<em v-if="blockedCount">· 已排除 {{ blockedCount }} 个</em>
+      <button v-if="blockedCount" title="重新参与随机" @click="$emit('restore-blocked')">恢复</button>
+    </p>
+
     <div class="pz-fx-row">
       <button
         :class="{ on: lyricFxOn }"
-        :title="lyricFxOn ? '关闭 3D 歌词 (L)' : '开启 3D 歌词，字色跟随当前画面 (L)'"
+        :title="lyricFxOn ? '关闭歌词特效 (L)' : '开启歌词特效 (L)'"
         @click="$emit('toggle-lyric')"
-      ><span>3D 歌词</span><em>{{ lyricFxOn ? 'ON' : 'OFF' }}</em></button>
-      <small>L · 字色跟随当前画面，默认关闭</small>
+      ><span>歌词特效</span><em>{{ lyricFxOn ? 'ON' : 'OFF' }}</em></button>
+      <small>L · 开关</small>
     </div>
+    <div class="pz-style-row" :class="{ muted: !lyricFxOn }">
+      <button
+        v-for="s in lyricStyles" :key="s.id"
+        :class="{ active: lyricStyleId === s.id }"
+        :title="s.hint" @click="$emit('set-lyric-style', s.id)"
+      >{{ s.label }}</button>
+      <button
+        class="pz-style-rand" :class="{ active: lyricStyleId === 'random' }"
+        title="随机：每曲自动换一种歌词特效" @click="$emit('set-lyric-style', 'random')"
+      >随机</button>
+    </div>
+    <p class="pz-style-note">{{ activeStyleHint }} · K 切换</p>
 
     <details class="pz-fold" :open="toneOpen">
       <summary @click.prevent="toneOpen = !toneOpen">
@@ -135,9 +152,8 @@
 // 数据来自 milkdrop.js 的 loadPresetLibrary(), 这里只负责「挑预设」和
 // 「调节画面」, 不碰 WebGL: 引擎下载/渲染全在父页面里。
 //
-// 筛选默认停在「推荐」(精选 + 体检过的预设), 而不是 100 个全放出来:
-// 社区预设里约 1/5 在弱 GPU 上会黑屏, 默认列表必须保证点哪个都有画面。
-// 想翻全量就点「全部」—— 那是显式选择, 用户自己承担。
+// 「推荐」只是列表默认筛选(带圆点的稳妥预设), 随机本身已从全量 100 个抽取:
+// 运行时确认渲染失败/播放中持续黑屏的会被临时拉黑, 面板显示计数并允许恢复。
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { OPEN_SOURCE } from './milkdrop.js'
@@ -146,12 +162,16 @@ const props = defineProps({
   entries: { type: Array, default: () => [] },
   currentKey: { type: String, default: '' },
   favorites: { type: Array, default: () => [] },
+  blockedCount: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
   error: { type: Boolean, default: false },
   autoMode: { type: String, default: 'track' },
   tone: { type: Object, default: () => ({ brightness: 0.94, contrast: 1.06, saturate: 1.02 }) },
   isOpenSource: { type: Boolean, default: true },
   lyricFxOn: { type: Boolean, default: false },
+  lyricStyles: { type: Array, default: () => [] },
+  lyricStyleId: { type: String, default: 'classic' },
+  lyricStyleActive: { type: String, default: 'classic' },
   labSceneId: { type: String, default: '' },
   scenes: { type: Array, default: () => [] },
   palettes: { type: Array, default: () => [] },
@@ -160,7 +180,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select', 'favorite', 'random', 'step', 'auto', 'tone', 'toggle-lyric', 'select-lab',
-  'back-open', 'palette', 'retry', 'close',
+  'back-open', 'palette', 'retry', 'restore-blocked', 'close', 'set-lyric-style',
 ])
 
 const query = ref('')
@@ -215,6 +235,15 @@ const AUTO_HINTS = {
 }
 const autoLabel = computed(() => AUTO_LABELS[props.autoMode] || AUTO_LABELS.off)
 const autoHint = computed(() => AUTO_HINTS[props.autoMode] || AUTO_HINTS.off)
+
+const activeLyricStyle = computed(() =>
+  props.lyricStyles.find(s => s.id === props.lyricStyleActive) || props.lyricStyles[0])
+const activeStyleHint = computed(() => {
+  if (props.lyricStyleId === 'random') {
+    return `随机 · 每曲一换，当前「${activeLyricStyle.value?.label || ''}」`
+  }
+  return activeLyricStyle.value?.hint || ''
+})
 
 function cycleAuto() {
   const order = ['off', 'track', 'time']
@@ -362,6 +391,18 @@ function step(dir) {
   background: color-mix(in srgb, var(--accent, #7dd3fc) 12%, transparent);
 }
 
+.pz-random-note {
+  margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  font-size: 9px; line-height: 1.5; color: rgba(255, 255, 255, 0.3);
+}
+.pz-random-note em { font-style: normal; color: rgba(255, 255, 255, 0.42); }
+.pz-random-note button {
+  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.55); border-radius: 6px; padding: 1px 7px;
+  font-size: 9px; font-family: inherit; cursor: pointer; transition: all 0.18s;
+}
+.pz-random-note button:hover { color: #fff; background: rgba(255, 255, 255, 0.13); }
+
 .pz-fx-row { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .pz-fx-row button {
   flex: 1; display: flex; align-items: center; justify-content: space-between;
@@ -377,6 +418,26 @@ function step(dir) {
 }
 .pz-fx-row button em { font-style: normal; font-size: 8px; letter-spacing: 0.14em; opacity: 0.7; }
 .pz-fx-row small { flex: 0 0 auto; font-size: 8px; color: rgba(255, 255, 255, 0.26); }
+
+.pz-style-row { display: flex; flex-wrap: wrap; gap: 3px; flex: 0 0 auto; }
+.pz-style-row.muted { opacity: 0.52; }
+.pz-style-row button {
+  flex: 1 1 auto; min-width: 30px; padding: 5px 1px; border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.52); font-size: 9px; font-family: inherit;
+  cursor: pointer; transition: all 0.18s;
+}
+.pz-style-row button:hover { color: #fff; background: rgba(255, 255, 255, 0.11); }
+.pz-style-row button.active {
+  color: var(--accent, #7dd3fc);
+  border-color: color-mix(in srgb, var(--accent, #7dd3fc) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, #7dd3fc) 12%, transparent);
+}
+.pz-style-row .pz-style-rand { flex: 1.15 1 0; }
+.pz-style-note {
+  margin: -5px 0 0; font-size: 8px; line-height: 1.5;
+  color: rgba(255, 255, 255, 0.3);
+}
 
 .pz-fold { flex: 0 0 auto; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px; }
 .pz-fold summary {

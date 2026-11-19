@@ -18,7 +18,8 @@
 //     左下角, 留出 L 形黑边;
 //   * render() 不要传 elapsedTime, 它内部自己累计 lastTime;
 //   * 预设名是社区字符串, 版本升级会改名: 存全名 + 模糊兜底, 别按下标存;
-//   * 一部分预设在弱 GPU 上 shader 编译失败(黑屏), 默认随机只从体检过的池子抽。
+//   * 一部分预设在弱 GPU 上 shader 编译失败(黑屏)。随机已从全量抽, 改为运行时
+//     体检: 渲染连续抛错 / 有声音却持续全黑的自动拉黑并记住, 详见 BLOCKED_STORAGE。
 
 export const OPEN_SOURCE = {
   engine: 'Butterchurn',
@@ -45,8 +46,9 @@ export const CURATED_MILK = [
   { key: 'Flexi + Martin - cascading decay swing', label: '流淌', hint: '彩色颜料往下淌' },
 ]
 
-// 随机池: 体检里「有画面、不过曝」的预设。随机只从这里抽,
-// 免得转到 shader 编译失败的黑屏预设(全量里大约 1/5 在弱 GPU 上是黑的)。
+// 随机池: 保留作「已知稳妥」的参考清单(列出+PresetBrowser 的 verified 标记),
+// 但随机本身已放开到全量 100 个 —— 只把运行时确认为坏的临时拉黑。
+// 下面这些是人工体检里确认「有画面、不过曝」的, 没有特殊优先级。
 export const RANDOM_POOL = [
   'Eo.S. + Zylot - skylight (Stained Glass Majesty mix)',
   'Eo.S. + Phat - cubetrace - v2',
@@ -100,6 +102,27 @@ export function resolveKey(keys, key) {
     if (hit) return hit
   }
   return ''
+}
+
+// ── 运行时黑名单 ──────────────────────────────────────────────
+// 随机已经放开到全量 100 个预设, 但其中一部分在弱 GPU 上 shader 编译失败
+// (render 抛错) 或播放中始终全黑。静态白名单(RANDOM_POOL)会把另外 78 个正常
+// 预设一起挡掉, 代价太大; 改成「用到坏的再记下来」: 本地持久化, 随机时跳过。
+// 只影响随机/自动轮换, 手动点选不受限 —— 换设备后也许就能用了。
+const BLOCKED_STORAGE = 'music_viz_blocked_presets'
+
+function loadBlocked() {
+  try {
+    const raw = globalThis.localStorage?.getItem(BLOCKED_STORAGE)
+    const arr = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(arr) ? arr.filter(k => typeof k === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function saveBlocked(set) {
+  try { globalThis.localStorage?.setItem(BLOCKED_STORAGE, JSON.stringify([...set])) } catch {}
 }
 
 let libraryPromise = null
@@ -159,7 +182,7 @@ function supportsWebGL2() {
  * 创建 MilkDrop 渲染器。首次调用会下载引擎 chunk(预设包可与 UI 并行预取)。
  * 返回 null 表示环境不支持(无 WebGL2 / 加载失败), 调用方应回退到 LAB 场景。
  */
-export async function createMilkdropEngine({ container, getAudioContext, getAnalyser, isMobile = false, onFrameColor = null, shouldSampleColor = null }) {
+export async function createMilkdropEngine({ container, getAudioContext, getAnalyser, isMobile = false, onFrameColor = null, shouldSampleColor = null, onBlocked = null }) {
   if (!supportsWebGL2()) return null
 
   let butterchurn, library
@@ -205,6 +228,22 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
   let running = false
   let currentKey = ''
   let warned = false
+
+  // 运行时黑名单: 随机从全量里抽, 但跳过这些渲染失败/播放中全黑的预设。
+  const blocked = loadBlocked()
+  let loadedAt = 0          // 当前预设加载时刻, blend 过渡完再判定, 别把过渡帧当黑屏
+
+  function markBlocked(key, reason) {
+    if (!key || blocked.has(key)) return
+    blocked.add(key)
+    saveBlocked(blocked)
+    try { onBlocked?.([...blocked], key, reason) } catch {}
+  }
+
+  function unblockAll() {
+    blocked.clear()
+    try { localStorage?.removeItem(BLOCKED_STORAGE) } catch {}
+  }
 
   // ── 画面主色采样 ────────────────────────────────────────────
   // 给叠在画面上的 3D 歌词用: 字的颜色跟着当前 MilkDrop 预设走, 而不是各染各的。
@@ -262,6 +301,76 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
     onFrameColor(hex)
   }
 
+  // ── 运行时体检 ────────────────────────────────────────────────
+  // 随机放开到全量后, 必须能把「在这台设备上根本不出画面」的预设挑出来。
+  // 判据要保守, 宁可漏判不可误杀:
+  //   ① render() 连续抛错 N 次 → shader 编译失败, 确定是坏的;
+  //   ② 有声音(analyser 有非零能量)却连续多次画面几乎全黑 → 假性黑屏。
+  // 静音/暂停/过场(analyser 无能量)一律不判, 因为大部分 MilkDrop 本来就是
+  // 靠音频驱动的, 没声音时全黑是正常的。blend 过渡期(2.5s)内也不判。
+  let healthTick = 0
+  let darkHits = 0
+  let renderFails = 0
+  let lumCanvas = null
+  let lumCtx = null
+
+  function audioEnergy() {
+    const analyser = getAnalyser()
+    if (!analyser) return 0
+    try {
+      const buf = new Uint8Array(analyser.fftSize)
+      analyser.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i += 4) sum += Math.abs(buf[i] - 128)
+      return sum / (buf.length / 4)
+    } catch {
+      return 0
+    }
+  }
+
+  // 「亮像素占比」而非平均亮度: 线框类预设大部分是黑底, 平均亮度很低,
+  // 但只要有线条就是有效画面, 不能被误杀。真正黑屏是一点亮像素都没有。
+  function litRatio() {
+    try {
+      if (!lumCanvas) {
+        lumCanvas = document.createElement('canvas')
+        lumCanvas.width = 32
+        lumCanvas.height = 18
+        lumCtx = lumCanvas.getContext('2d', { willReadFrequently: true })
+      }
+      lumCtx.drawImage(canvas, 0, 0, 32, 18)
+      const px = lumCtx.getImageData(0, 0, 32, 18).data
+      let lit = 0
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114 > 18) lit++
+      }
+      return lit / (px.length / 4)
+    } catch {
+      return -1
+    }
+  }
+
+  function healthCheck() {
+    if (!currentKey || blocked.has(currentKey)) return
+    // 过渡期不判
+    if (performance.now() - loadedAt < 2500) return
+    // 每 ~0.5s 判一次(30fps 下每 15 帧), 别为体检拖慢渲染
+    if (++healthTick % 15) return
+    // 没声音 = 不判(大部分预设静音时本就黑)
+    if (audioEnergy() < 2.5) { darkHits = 0; return }
+    const lit = litRatio()
+    if (lit < 0) return
+    if (lit < 0.01) {
+      if (++darkHits >= 3) {
+        markBlocked(currentKey, 'black')
+        darkHits = 0
+        randomPreset()
+      }
+    } else {
+      darkHits = 0
+    }
+  }
+
   function connectAudio() {
     const analyser = getAnalyser()
     if (analyser && viz) {
@@ -278,17 +387,21 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
       viz.loadPreset(preset, blend)
       currentKey = realKey
       warned = false
+      loadedAt = performance.now()
+      darkHits = 0
+      renderFails = 0
       return realKey
     } catch {
       return ''
     }
   }
 
-  /** 从指定池子里随机抽一个(默认用体检过的池子), 排除当前这个。 */
+  /** 从全量预设里随机抽一个, 排除当前 + 运行时黑名单。pool 可显式收窄范围。 */
   function randomPreset(pool) {
-    const source = (pool?.length ? pool : library.verifiedKeys.length ? library.verifiedKeys : keys)
-      .filter(k => keys.includes(k) && k !== currentKey)
-    const list = source.length ? source : keys.filter(k => k !== currentKey)
+    const healthy = k => keys.includes(k) && k !== currentKey && !blocked.has(k)
+    // 默认用全量(不再只用 RANDOM_POOL); 只有被明确拉黑的才排除。
+    const source = (pool?.length ? pool : keys).filter(healthy)
+    const list = source.length ? source : keys.filter(k => keys.includes(k) && k !== currentKey)
     if (!list.length) return currentKey
     return loadPreset(list[Math.floor(Math.random() * list.length)], 2.2)
   }
@@ -309,9 +422,17 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
       // 不要传 elapsedTime: butterchurn 内部要自己累计 lastTime,
       // 传了就不会更新, 长时间播放会和真实时间脱节
       viz.render()
+      renderFails = 0
       maybeSampleColor()
+      healthCheck()
     } catch (err) {
-      // 个别预设的 shader 在移动 GPU 上会编译失败: 只喊一次, 别刷屏
+      // 个别预设的 shader 在移动 GPU 上会编译失败: 连续多次才拉黑,
+      // 避免首帧偶发抖动误杀。只喊一次, 别刷屏。
+      if (++renderFails >= 5 && currentKey && !blocked.has(currentKey)) {
+        markBlocked(currentKey, 'render')
+        renderFails = 0
+        randomPreset()
+      }
       if (!warned) {
         warned = true
         console.warn('[milkdrop] render failed:', err?.message || err)
@@ -341,6 +462,8 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
       loadPreset,
       loadIndex: (i, blend = 0) => loadPreset(keys[i], blend),
       render: () => { try { viz.render() } catch {} },
+      blockedKeys: () => [...blocked],
+      unblockAll,
     }
   }
 
@@ -352,6 +475,8 @@ export async function createMilkdropEngine({ container, getAudioContext, getAnal
     loadPreset,
     randomPreset,
     stepPreset,
+    get blockedKeys() { return [...blocked] },
+    unblockAll,
     show() { canvas.style.display = 'block' },
     hide() { canvas.style.display = 'none' },
     start() {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,21 @@ func TestAuthCodeRequiresConfiguration(t *testing.T) {
 		codeRequest{Email: "heidi@example.com", Purpose: models.CodePurposeRegister})
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("未配置邮件服务发码应 503, got %d %v", status, body)
+	}
+}
+
+func TestVerificationEmailBody(t *testing.T) {
+	body := verificationEmailBody("123456", 10)
+	if !strings.Contains(body, "【123456】") {
+		t.Fatalf("验证码应被【】包裹，got %q", body)
+	}
+	if !strings.Contains(body, "有效期 10 分钟") {
+		t.Fatalf("有效期文案不对，got %q", body)
+	}
+	// 模拟上游把换行全吞掉：码和分钟数仍不能粘连。
+	collapsed := strings.ReplaceAll(body, "\n", "")
+	if strings.Contains(collapsed, "12345610") {
+		t.Fatalf("换行丢失后验证码与分钟数粘在一起，got %q", collapsed)
 	}
 }
 

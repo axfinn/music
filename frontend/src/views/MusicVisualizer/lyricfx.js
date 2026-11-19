@@ -22,6 +22,7 @@
 // 没频谱时退化成 BPM 合成拍子,和 drive.js 同样的兜底思路。
 
 import * as THREE from 'three'
+import { getLyricStyle } from './lyricStyles.js'
 
 const TAU = Math.PI * 2
 const FONT_STACK = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif'
@@ -37,11 +38,11 @@ const LYRIC_Y = 0.44
 const TITLE_Y = 0.28
 
 // 拼歌名的节拍编排。以前 IDLE 只有 10 拍,十几秒就炸开重组一次,像坏掉的循环动画;
-// 现在拉到 ~40 拍(约半分钟)才偶尔点缀一次,歌词绝大多数时间是稳定可读的主角。
+// 现在默认拉到 ~40 拍(约半分钟)才偶尔点缀一次,歌词绝大多数时间是稳定可读的主角。
+// 各风格的间隔在 lyricStyles.js 里单独配(STEPS/HOLD 共用,保持一样的呼吸感)。
 const STEPS_UP = 6        // 6 拍慢慢拼齐(更缓,不突兀)
 const STEPS_DOWN = 3      // 3 拍散回歌词
 const HOLD_BEATS = 2      // 拼齐后只摆 2 拍,不喧宾夺主
-const IDLE_BEATS = 40     // 散回后歇 ~40 拍再来一轮
 
 const VERT = /* glsl */ `
   attribute vec3 aTitle;     // 歌名里的落点
@@ -66,6 +67,9 @@ const VERT = /* glsl */ `
   uniform float uPixelScale;
   uniform float uBass;
   uniform float uHigh;
+  uniform float uStyle;   // 0 经典 / 1 涟漪 / 2 落沙 / 3 星轨 / 4 爆炸
+  uniform float uArc;     // 拼歌名时的飞行弧幅度,风格各异
+  uniform float uGround;  // 落沙的地面高度(世界坐标 y),随画面高宽比算好写进来
 
   varying float vTint;
   varying float vGlow;
@@ -82,7 +86,7 @@ const VERT = /* glsl */ `
     float ch = mix(aCharL, aCharT, m);
 
     // 飞行弧:中段轻微抬起 + 侧向散开即可。原来的大开大合(纵深 ±1.1)太抢戏
-    float arc = sin(m * 3.14159265);
+    float arc = sin(m * 3.14159265) * uArc;
     p.y += arc * (0.08 + aRand * 0.22) + sin(arc * 3.4 + aRand * 6.28) * arc * 0.14;
     p.x += arc * (aRand - 0.5) * 0.24;
     p.z += arc * (fract(aRand * 7.31) - 0.5) * 0.8;
@@ -115,6 +119,69 @@ const VERT = /* glsl */ `
     local.x += sin(uTime * 1.2 + ph) * (0.002 + uBass * 0.006);
     local.y += cos(uTime * 0.95 + ph * 1.7) * (0.0025 + uBass * 0.007);
     local.z += sin(uTime * 0.8 + ph * 0.6) * (0.006 + uBass * 0.014);
+
+    // ── 风格层:只在这里追加位移,字形骨架不变 ──
+    // uStyle 是 uniform,所有顶点走同一分支,不存在 GPU 分支发散。
+    if (uStyle > 0.5 && uStyle < 1.5) {
+      // 涟漪:以每个字心为圆心的同心波,低频推着振幅
+      float r = length(local.xy);
+      float wave = sin(r * 6.5 - uTime * 2.3 + ch * 0.8 - uBeat * 1.2);
+      vec2 dir = r > 0.0001 ? local.xy / r : vec2(0.0);
+      local.xy += dir * wave * (0.014 + uBass * 0.03);
+      local.z += wave * 0.045;
+    } else if (uStyle > 1.5 && uStyle < 2.5) {
+      // 落沙(自由落体):粒子脱离字形往下掉,触底铺一层再循环。
+      // 每颗粒子有独立的相位(起始高度/速度/横向漂移),所以整体像沙漏而不是齐步走。
+      // 用 fract 做无缝循环:一颗落地后从字块顶部重新出发。
+      // 相位主要跟"字序"走:同一个字的粒子几乎同步下落,字才不会碎成雾;
+      // 只有很小一部分(按 aRand)脱落得快些,形成沙漏里那一缕散沙。
+      float grain = fract(aRand * 7.3);
+      float loose = step(0.86, grain);           // 约 14% 的粒子是"散沙"
+      float chSeed = fract(ch * 0.618 + 0.13);    // 相邻字的相位错开(黄金比),字内一致
+      float seed = fract(chSeed + grain * 0.08);  // 字内只留 0.08 的细微差
+      float speed = 0.11 + chSeed * 0.05 + loose * 0.22;
+      float t = fract(seed + uTime * speed);      // 0→1 一次完整的下落
+      // 起始点到地面的距离,乘 t² 就是自由落体位移(t=1 时正好触地)
+      float startY = c.y + local.y;
+      float travel = max(0.05, startY - uGround);
+      float drop = travel * t * t;
+      float gy = startY - drop;
+      // 触底后铺在地面上方一点(按种子错开高度),堆出薄薄一层而不是一条线
+      gy = max(gy, uGround + fract(aRand * 53.1) * 0.06);
+      // 落地后横向铺开一点(按种子散在字宽内),避免堆成一条竖线
+      float spread = (fract(aRand * 37.7) - 0.5) * (loose > 0.5 ? 0.3 : 0.06);
+      local.x += spread * smoothstep(0.55, 1.0, t);
+      // 把算好的世界 y 换回 local(后面 pos = c + local)
+      local.y = gy - c.y;
+      local.z += sin(seed * 6.28 + uTime * 0.8) * 0.02;
+      // 拍点扬起:整层沙往上弹一下再落下(冲量随时间指数衰减)
+      float dtb2 = uTime - uBeatTime;
+      float kick = dtb2 > 0.0 ? exp(-dtb2 * 3.2) * uBeat * 0.32 : 0.0;
+      local.y += kick * (0.4 + seed * 0.6);
+    } else if (uStyle > 2.5 && uStyle < 3.5) {
+      // 星轨:每个字绕自己的中心慢慢转,角度按字序错开
+      float a = uTime * 0.42 + ch * 0.9;
+      float ca = cos(a);
+      float sa = sin(a);
+      local.xy = mat2(ca, -sa, sa, ca) * local.xy;
+      local.z += sin(uTime * 1.3 + ph) * 0.055;
+    } else if (uStyle > 3.5) {
+      // 爆炸(爆聚):鼓点把粒子沿径向炸开,随后弹力吸回原位。
+      // 爆裂强度 burst 随拍点冲量 + 时间指数衰减:啪一下炸开,缓缓收拢。
+      float dtb3 = uTime - uBeatTime;
+      float burst = dtb3 > 0.0 ? exp(-dtb3 * 2.4) * uBeat : 0.0;
+      float r = length(local.xy);
+      vec2 dir = r > 0.0001 ? local.xy / r : vec2(cos(ph), sin(ph));
+      // 每颗粒子炸开的距离略有差异,避免齐刷刷一个球面
+      float reach = burst * (0.55 + fract(aRand * 29.3) * 1.1);
+      local.xy += dir * reach;
+      local.z += burst * (fract(aRand * 11.7) - 0.5) * 0.9;
+      // 炸开时轻微旋转,收拢时回正
+      float spin = burst * 0.5 * fract(aRand * 7.9);
+      float cs2 = cos(spin);
+      float sn2 = sin(spin);
+      local.xy = mat2(cs2, -sn2, sn2, cs2) * local.xy;
+    }
 
     vec3 pos = c + local;
 
@@ -385,16 +452,18 @@ function createField({ cap, pointSize, opacity }) {
     uScaleT: { value: 1 },
     uBass: { value: 0 },
     uHigh: { value: 0 },
+    // 风格相关:切风格只写这四个值,粒子/buffer/draw call 全部复用
+    uStyle: { value: 0 },
+    uArc: { value: 1 },
+    uSize: { value: pointSize },
+    uOpacity: { value: opacity },
+    uGround: { value: -2.6 },
   }
 
   const material = new THREE.ShaderMaterial({
     vertexShader: VERT_FIX,
     fragmentShader: FRAG,
-    uniforms: {
-      ...shared,
-      uSize: { value: pointSize },
-      uOpacity: { value: opacity },
-    },
+    uniforms: shared,
     // 用正常混合,不再 additive:
     //   additive 在明亮预设上会把字叠成一团白(过曝),和画面糊在一起。
     //   正常混合下字是实色,颜色能跟着画面主色走,亮暗预设都清晰。
@@ -521,7 +590,7 @@ function createField({ cap, pointSize, opacity }) {
 // ─────────────────────────────────────────────────────────────
 // 主入口
 // ─────────────────────────────────────────────────────────────
-export function createLyricFx({ container, getAnalyser, isPlaying = () => false, isMobile = false }) {
+export function createLyricFx({ container, getAnalyser, isPlaying = () => false, isMobile = false, styleId = 'classic' }) {
   if (!container) return null
 
   const renderer = new THREE.WebGLRenderer({
@@ -548,6 +617,26 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
   root.add(field.object)
   scene.add(root)
 
+  // ── 风格 ──
+  // 只有三种粒子风格会走到这里;跳动/段落走 lyricTextFx.js 的 DOM 层。
+  let cfg = getLyricStyle(styleId)
+  let currentStyleId = cfg.id
+
+  // 落沙/爆炸的 idleBeats=0:不参与"拼歌名"编排,粒子始终待在歌词上做自己的事
+  const canMorph = () => cfg.idleBeats > 0
+
+  function applyStyle(id) {
+    const s = getLyricStyle(id)
+    cfg = s
+    currentStyleId = s.id
+    const u = field.shared
+    u.uStyle.value = s.style
+    u.uArc.value = s.arc
+    u.uSize.value = s.pointSize
+    u.uOpacity.value = s.opacity
+    return s.id
+  }
+
   // ── 频谱 ──
   let bins = new Uint8Array(512)
   const bassHistory = []
@@ -567,9 +656,25 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
   let fresh = 1          // 0→1,换行时从四周聚拢
   let pendingFresh = false
 
+  // 首次应用风格(uniform 初值);此时上面的状态变量都已声明,可以安全重置 morph
+  applyStyle(styleId)
+
+  // 切风格:从会拼歌名的切到落沙/爆炸时,立刻收回歌词态,别卡在半途的歌名上
+  function setStyle(id) {
+    const real = applyStyle(id)
+    if (!canMorph()) {
+      phase = 'idle'
+      morph = 0
+      morphTarget = 0
+    }
+    return real
+  }
+
   function onBeat() {
     beatCount++
     if (phase === 'idle') {
+      // 落沙/爆炸(idleBeats=0)不拼歌名,永远停在歌词态做自己的动画
+      if (!canMorph()) return
       if (idleBeats > 0) idleBeats--
       else if (field.title) {
         phase = 'up'
@@ -590,7 +695,7 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     morphTarget = Math.max(0, morphTarget - 1 / STEPS_DOWN)
     if (morphTarget <= 0) {
       phase = 'idle'
-      idleBeats = IDLE_BEATS
+      idleBeats = cfg.idleBeats
     }
   }
 
@@ -705,8 +810,8 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     pointer.x += (pointer.tx - pointer.x) * Math.min(1, dt * 3.5)
     pointer.y += (pointer.ty - pointer.y) * Math.min(1, dt * 3.5)
 
-    // 没有歌词(前奏/间奏)时,歌名就是主角,一直摆着
-    if (!field.lyric && field.title) {
+    // 没有歌词(前奏/间奏)时,歌名就是主角,一直摆着 —— 但落沙/爆炸不拼歌名,跳过
+    if (!field.lyric && field.title && canMorph()) {
       phase = 'hold'
       morphTarget = 1
       holdBeats = Math.max(holdBeats, 1)
@@ -720,8 +825,8 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     }
     morph += (morphTarget - morph) * Math.min(1, dt * 9.5)
 
-    root.rotation.y = pointer.x * 0.1 + Math.sin(elapsed * 0.25) * 0.022
-    root.rotation.x = -pointer.y * 0.05 + Math.sin(elapsed * 0.19) * 0.012
+    root.rotation.y = pointer.x * cfg.sway + Math.sin(elapsed * 0.25) * cfg.sway * 0.22
+    root.rotation.x = -pointer.y * cfg.sway * 0.5 + Math.sin(elapsed * 0.19) * cfg.sway * 0.12
     // 低频把整块往前推一点 —— 最便宜的冲击感
     root.position.z = bass * 0.3
 
@@ -791,7 +896,8 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     scaleT = 1
     repaint()
     // 换歌:让这些粒子逐拍把歌名拼出来亮个相,再散回歌词
-    if (field.title) {
+    // 落沙/爆炸不拼歌名(它们有自己的编排),只在会拼的风格里入场
+    if (field.title && canMorph()) {
       phase = 'up'
       morphTarget = 1 / STEPS_UP
       idleBeats = 0
@@ -808,6 +914,9 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     camera.aspect = w / h
     camera.updateProjectionMatrix()
     field.setPixelScale(heightPx / (2 * Math.tan((FOV * Math.PI) / 360)))
+    // 落沙的地面:视口底边往上一小截,沙粒堆在这条线附近
+    const visH = 2 * camera.position.z * Math.tan((FOV * Math.PI) / 360)
+    field.shared.uGround.value = -visH / 2 + 0.32
     // 宽度变了可能要重新折行(横竖屏切换),只在这件事真的变了时重建
     if (lastLine && perLineFor(lastLine) !== lastPerLine) applyLine(lastLine)
     else fitScales()
@@ -850,6 +959,9 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
   function start() {
     if (running) return
     running = true
+    // WebGL canvas 停帧后最后一帧会留在屏幕上,切到文字风格时必须藏掉,
+    // 否则两套渲染器的画面会叠在一起。
+    renderer.domElement.style.display = ''
     last = 0
     raf = requestAnimationFrame(frame)
   }
@@ -858,6 +970,7 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     running = false
     if (raf) cancelAnimationFrame(raf)
     raf = 0
+    renderer.domElement.style.display = 'none'
   }
 
   function setPointer(nx, ny) {
@@ -887,6 +1000,9 @@ export function createLyricFx({ container, getAnalyser, isPlaying = () => false,
     setLine: text => applyLine(text),
     /** 换歌名:粒子会把它拼出来亮个相 */
     setTitle: title => applyTitle(title),
+    /** 切粒子风格:只改几个 uniform,不重建粒子 */
+    setStyle,
+    get styleId() { return currentStyleId },
     // 调试探针(生产构建会被摇掉)
     ...(import.meta.env?.DEV ? {
       _debug: { field, camera, get morph() { return morph }, get phase() { return phase }, get beatCount() { return beatCount } },

@@ -140,8 +140,7 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 	}
 
 	subject := fmt.Sprintf("[%s] 邮箱验证码", h.cfg.Site.Name)
-	bodyText := fmt.Sprintf("你的验证码是：%s\n\n%d 分钟内有效，请勿转发给他人。\n如果不是你本人操作，请忽略这封邮件。\n",
-		code, h.cfg.Auth.CodeTTLMinutes)
+	bodyText := verificationEmailBody(code, h.cfg.Auth.CodeTTLMinutes)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	if err := h.mailer.Send(ctx, []string{email}, subject, bodyText); err != nil {
@@ -150,6 +149,15 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"sent": true, "ttl": h.cfg.Auth.CodeTTLMinutes * 60})
+}
+
+// verificationEmailBody 生成验证码邮件正文。
+// 码和有效期之间不能只靠换行分隔：部分邮件网关会把纯文本里的换行吞掉，
+// 只写 "123456\n\n10 分钟" 展示时就粘成 "12345610 分钟"。用【】和「有效期」
+// 双重标识，即使换行全丢也不会混在一起。
+func verificationEmailBody(code string, ttlMinutes int) string {
+	return fmt.Sprintf("你的验证码是：【%s】\n\n有效期 %d 分钟，请勿转发给他人。\n如果不是你本人操作，请忽略这封邮件。\n",
+		code, ttlMinutes)
 }
 
 // Register POST /api/auth/register — 验证码 + 密码注册，成功即登录。

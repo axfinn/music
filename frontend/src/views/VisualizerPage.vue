@@ -74,6 +74,20 @@
             <path d="M18 4.5v9.2M18 13.7a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z" />
           </svg>
         </button>
+        <button
+          class="viz-icon-btn"
+          :class="{ active: keepAwakeOn && wakeLocked }"
+          :disabled="!wakeSupported"
+          :title="wakeTitle"
+          @click="toggleKeepAwake"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.5" y="4" width="19" height="12.5" rx="2" />
+            <path d="M8.5 20h7" />
+            <circle cx="16.3" cy="8.2" r="2.1" />
+            <path d="M16.3 4.6v.8M16.3 11v.8M12.7 8.2h.8M19.1 8.2h.8" />
+          </svg>
+        </button>
         <button class="viz-icon-btn" :title="isFullscreen ? '退出全屏 (F)' : '全屏 (F)'" @click="toggleFullscreen">
           <svg v-if="isFullscreen" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 4H5v4M15 4h4v4M9 20H5v-4M15 20h4v-4" />
@@ -95,12 +109,16 @@
         :entries="presetEntries"
         :current-key="presetKey"
         :favorites="favorites"
+        :blocked-count="blockedCount"
         :loading="milkLoading"
         :error="milkError"
         :auto-mode="autoMode"
         :tone="tone"
         :is-open-source="isOpenSource"
         :lyric-fx-on="lyricFxOn"
+        :lyric-styles="LYRIC_STYLES"
+        :lyric-style-id="lyricStyleId"
+        :lyric-style-active="lyricStyleActive"
         :lab-scene-id="labSceneId"
         :scenes="SCENE_LIST"
         :palettes="PALETTES"
@@ -111,11 +129,13 @@
         @step="stepPreset"
         @auto="setAutoMode"
         @toggle-lyric="toggleLyricFx"
+        @set-lyric-style="applyLyricStyle"
         @tone="setTone"
         @select-lab="switchToLab"
         @back-open="switchToOpen"
         @palette="switchPalette"
         @retry="retry"
+        @restore-blocked="restoreBlocked"
         @close="closeBrowser"
       />
     </aside>
@@ -129,7 +149,11 @@
           <strong>{{ isOpenSource ? presetTitle : labLabel }}</strong>
           <em>预设库 ›</em>
         </button>
-        <button class="m-chip" :class="{ active: lyricFxOn }" @click="toggleLyricFx()">3D 歌词</button>
+        <button class="m-chip" :class="{ active: lyricFxOn }" @click="toggleLyricFx()">歌词</button>
+        <button
+          class="m-chip m-fx-chip" :class="{ active: lyricFxOn && lyricStyleId !== 'classic' }"
+          :title="activeLyricStyleHint" @click="cycleLyricStyle()"
+        >{{ activeLyricStyleLabel }}</button>
         <button class="m-chip" @click="randomPreset()">随机</button>
       </div>
 
@@ -210,7 +234,7 @@
           </div>
 
           <p class="viz-tip">
-            空格 播放/暂停 · ←→ 快进 · ↑↓ 音量 · N/P 切歌 · S 倍速 · [ ] 换预设 · R 随机 · A 自动 · L 字效 · F 全屏
+            空格 播放/暂停 · ←→ 快进 · ↑↓ 音量 · N/P 切歌 · S 倍速 · [ ] 换预设 · R 随机 · A 自动 · L 字效 · K 换字效 · W 亮屏 · F 全屏
           </p>
         </div>
       </div>
@@ -252,7 +276,9 @@
 //   MusicVisualizer/milkdrop.js  ★ 默认画面:Butterchurn(MIT)+ 100 个 MilkDrop 社区预设
 //   MusicVisualizer/PresetBrowser.vue 预设库 UI(搜索/收藏/随机/自动轮换/画面调节)
 //   MusicVisualizer/engine.js + scenes.js  LAB:6 个自研场景,仅实验与 WebGL2 回退
-//   MusicVisualizer/lyricfx.js 3D 歌词点云(独立透明层;开源态字色跟随画面主色)
+//   MusicVisualizer/lyricfx.js 3D 歌词点云(经典/涟漪/落沙/星轨/爆聚;字色跟随画面主色)
+//   MusicVisualizer/lyricTextFx.js DOM 字效(跳动/段落/弹幕)
+//   MusicVisualizer/physicsfx.js  2D canvas 刚体物理(重力;字块落地碰撞、鼠标推开)
 //   MusicVisualizer/dj.js      打碟台效果链
 //
 // 三个必须守住的点:
@@ -268,6 +294,7 @@
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMediaPlayer } from '../composables/useMediaPlayer.js'
+import { useWakeLock } from '../composables/useWakeLock.js'
 import { request } from '../api/client.js'
 import { parseLyrics, detectMode, findActiveIndex } from '../utils/lrc.js'
 import { createAudioDrive } from './MusicVisualizer/drive.js'
@@ -280,6 +307,12 @@ import {
 } from './MusicVisualizer/milkdrop.js'
 import { createDjEngine } from './MusicVisualizer/dj.js'
 import { createLyricFx } from './MusicVisualizer/lyricfx.js'
+import { createLyricTextFx } from './MusicVisualizer/lyricTextFx.js'
+import { createPhysicsFx } from './MusicVisualizer/physicsfx.js'
+import {
+  LYRIC_STYLES, RANDOM_STYLE_ID, getLyricStyle, nextLyricStyle,
+  normalizeLyricStyle, resolveLyricStyle,
+} from './MusicVisualizer/lyricStyles.js'
 import PresetBrowser from './MusicVisualizer/PresetBrowser.vue'
 import DjConsole from './MusicVisualizer/DjConsole.vue'
 
@@ -307,6 +340,8 @@ const STORAGE = {
   tone: 'music_viz_tone',
   lab: 'music_viz_lab_scene',
   palette: 'music_viz_palette',
+  lyricStyle: 'music_viz_lyric_style',
+  keepAwake: 'music_viz_keep_awake',
 }
 function read(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback } catch { return fallback }
@@ -341,6 +376,7 @@ const isOpenSource = computed(() => source.value === 'open')
 const presetKey = ref(initialPreset())
 const presetEntries = ref([])
 const favorites = ref(readJSON(STORAGE.favorites, []))
+const blockedCount = ref(0)
 const autoMode = ref(read(STORAGE.auto, 'track'))
 const tone = ref({ brightness: 0.94, contrast: 1.06, saturate: 1.02, ...readJSON(STORAGE.tone, {}) })
 const labSceneId = ref(read(STORAGE.lab, 'aurora'))
@@ -418,6 +454,31 @@ let idleTimer = null
 let autoTimer = 0
 let pageActive = true
 
+// ── 屏幕常亮 ────────────────────────────────────────────────
+// 沉浸播放本来就是「盯着画面听」的场景，播放时默认不熄屏；暂停/切走立刻放锁。
+// 用户可关掉（记住选择）；不支持 Wake Lock 的浏览器按钮禁用，纯静默降级。
+const wake = useWakeLock()
+const wakeSupported = wake.supported
+const wakeLocked = wake.locked
+const keepAwakeOn = ref(read(STORAGE.keepAwake, '1') === '1')
+const wakeTitle = computed(() => {
+  if (!wakeSupported) return '当前浏览器不支持屏幕常亮'
+  if (!keepAwakeOn.value) return '屏幕常亮：已关（点击开启，播放时不熄屏）'
+  return wakeLocked.value ? '屏幕常亮：播放中保持亮屏（点击关闭）' : '屏幕常亮：已开（播放时才生效）'
+})
+// 四个条件缺一不可：用户开关 + 页面激活 + 文档可见 + 正在播放。
+// visibilitychange 的回前台重申请由 composable 自己处理，这里只负责同步条件。
+function syncWake() {
+  wake.setWanted(keepAwakeOn.value && pageActive && !document.hidden && playerState.isPlaying)
+}
+watch([keepAwakeOn, () => playerState.isPlaying], syncWake)
+function toggleKeepAwake() {
+  keepAwakeOn.value = !keepAwakeOn.value
+  write(STORAGE.keepAwake, keepAwakeOn.value ? '1' : '0')
+  syncWake()
+  bumpUi()
+}
+
 async function ensureMilk() {
   if (milk) return milk
   if (milkPromise) return milkPromise
@@ -434,9 +495,20 @@ async function ensureMilk() {
     onFrameColor: hex => {
       lastFrameColor.value = hex
       lyricFx?.setFrameColor(hex)
+      lyricText?.setPalette(hex)
+      physicsFx?.setFrameColor(hex)
     },
-  }).then(m => { milk = m; return m }).catch(() => null)
+    // 运行时体检拉黑了坏预设 → 同步计数给面板(可一键恢复)
+    onBlocked: keys => { blockedCount.value = keys.length },
+  }).then(m => { milk = m; blockedCount.value = m?.blockedKeys.length || 0; return m }).catch(() => null)
   return milkPromise
+}
+
+function restoreBlocked() {
+  if (!milk) return
+  milk.unblockAll()
+  blockedCount.value = 0
+  flash()
 }
 
 function ensureEngine() {
@@ -453,6 +525,7 @@ function setupResizeObserver() {
     engine?.resize()
     milk?.resize()
     lyricFx?.resize()
+    physicsFx?.resize()
   })
   resizeObserver.observe(stageRef.value)
 }
@@ -616,6 +689,8 @@ function switchToLab(id) {
   engine?.mountScene(id)
   // 离开 MilkDrop 后不再有画面采样,字色退回站点配色
   lyricFx?.setPalette(palette.value)
+  lyricText?.setPalette(palette.value.a)
+  physicsFx?.setPalette(palette.value)
   if (isMobile.value) browserOpen.value = false
   flash()
   bumpUi()
@@ -642,61 +717,181 @@ async function switchToOpen(doFlash = true) {
   bumpUi()
 }
 
-// ── 3D 歌词/歌名字效 ──
-// 独立一层透明画布:不参与场景切换,所以切到开源预设也照样有字。
+// ── 歌词特效:9 种风格,三类渲染器 ──
+// 粒子(经典/涟漪/落沙/星轨/爆聚):共用一块 WebGL 层和一套粒子,切风格只改 uniform;
+// 文字(跳动/段落/弹幕):DOM + CSS 合成层动画,不新增 WebGL context、不逐帧写 DOM;
+// 物理(重力):独立 2D canvas 刚体引擎,自研轻量物理,不引第三方库。
+// 同一时刻只 start 一个,切风格/切歌不会两边同时烧资源。
 const LYRIC_FX_STORAGE = 'music_viz_lyricfx'
 const lyricStageRef = ref(null)
 // 默认关:首屏只让开源预设说话,自建字效不再盖住画面;也少一个 WebGL context。
 // 之前明确开过(存了 1)的用户不受影响。
 const lyricFxOn = ref(read(LYRIC_FX_STORAGE, '0') === '1')
+const lyricStyleId = ref(normalizeLyricStyle(read(STORAGE.lyricStyle, 'classic')))
+const lyricStyleActive = ref(resolveLyricStyle(lyricStyleId.value))
+const activeLyricStyle = computed(() => getLyricStyle(lyricStyleActive.value))
+const activeLyricStyleLabel = computed(() =>
+  lyricStyleId.value === RANDOM_STYLE_ID ? `随机·${activeLyricStyle.value.label}` : activeLyricStyle.value.label)
+const activeLyricStyleHint = computed(() =>
+  lyricStyleId.value === RANDOM_STYLE_ID
+    ? `每曲自动换一种 · 当前「${activeLyricStyle.value.label}」`
+    : activeLyricStyle.value.hint)
 const lastFrameColor = ref('')   // 最近一次画面采样主色(开源态)
 let lyricFx = null
+let lyricText = null
+let physicsFx = null
 let sentLine = null
 let sentTitle = null
+let sentContext = ''
+
+function particleId(id) {
+  const s = getLyricStyle(id)
+  return s.renderer === 'particles' ? s.id : 'classic'
+}
+function textId(id) {
+  const s = getLyricStyle(id)
+  return s.renderer === 'text' ? s.id : 'bounce'
+}
 
 function syncLyricText() {
-  if (!lyricFx) return
   const line = lyricLine.value || ''
   if (line !== sentLine) {
     sentLine = line
-    lyricFx.setLine(line)
+    lyricFx?.setLine(line)
+    lyricText?.setLine(line)
+    physicsFx?.setLine(line)
   }
   const title = track.value?.title || ''
   if (title !== sentTitle) {
     sentTitle = title
-    lyricFx.setTitle(title, track.value?.artist || '')
+    lyricFx?.setTitle(title, track.value?.artist || '')
+    lyricText?.setTitle(title)
+    physicsFx?.setTitle(title)
+  }
+  // 段落/弹幕要整段歌词 + 当前句;只在它们真变了时才重建 DOM
+  const effect = activeLyricStyle.value.effect
+  if (lyricText && (effect === 'paragraph' || effect === 'marquee')) {
+    const key = `${track.value?.id || ''}:${activeLyric.value}:${lyrics.value.length}`
+    if (key !== sentContext) {
+      sentContext = key
+      lyricText.setContext(lyrics.value.map(l => l.text), activeLyric.value)
+    }
   }
 }
 
-function initLyricFx() {
+function initLyricFx(styleId) {
   if (lyricFx || !lyricStageRef.value) return
   lyricFx = createLyricFx({
     container: lyricStageRef.value,
     getAnalyser: () => player.getAnalyser(),
     isPlaying: () => playerState.isPlaying,
     isMobile: isMobile.value,
+    styleId: particleId(styleId),
   })
   if (!lyricFx) return
+  // 新实例没有歌词缓存,清掉页面级 sent* 才能把当前行/歌名灌进去
+  sentLine = null
+  sentTitle = null
+  sentContext = ''
   // 开源态用最近一次画面主色上色;LAB 态(没有 MilkDrop 采样)退回站点配色
   if (isOpenSource.value && lastFrameColor.value) lyricFx.setFrameColor(lastFrameColor.value)
   else lyricFx.setPalette(palette.value)
   syncLyricText()
-  if (lyricFxOn.value && !document.hidden) lyricFx.start()
+}
+
+function initLyricTextFx(styleId) {
+  if (lyricText || !lyricStageRef.value) return
+  lyricText = createLyricTextFx({
+    container: lyricStageRef.value,
+    getAnalyser: () => player.getAnalyser(),
+    isMobile: isMobile.value,
+    styleId: textId(styleId),
+  })
+  if (!lyricText) return
+  sentLine = null
+  sentTitle = null
+  sentContext = ''
+  lyricText.setPalette(isOpenSource.value && lastFrameColor.value ? lastFrameColor.value : palette.value.a)
+  syncLyricText()
+}
+
+function initPhysicsFx() {
+  if (physicsFx || !lyricStageRef.value) return
+  physicsFx = createPhysicsFx({
+    container: lyricStageRef.value,
+    getAnalyser: () => player.getAnalyser(),
+    isPlaying: () => playerState.isPlaying,
+    isMobile: isMobile.value,
+  })
+  if (!physicsFx) return
+  if (isOpenSource.value && lastFrameColor.value) physicsFx.setFrameColor(lastFrameColor.value)
+  else physicsFx.setPalette(palette.value)
+  sentLine = null
+  sentTitle = null
+  syncLyricText()
+}
+
+// 停掉除 keep 之外的所有渲染器(keep 是要启动的那一个)。
+function stopOthers(keep) {
+  if (keep !== 'particles') lyricFx?.stop()
+  if (keep !== 'text') lyricText?.stop()
+  if (keep !== 'physics') physicsFx?.stop()
+}
+
+// 只让当前风格对应的渲染器跑,另外两个立刻停掉。
+function ensureActiveRenderer() {
+  if (!lyricFxOn.value || !pageActive || document.hidden) return
+  const style = activeLyricStyle.value
+  if (style.renderer === 'particles') {
+    if (!lyricFx) initLyricFx(lyricStyleActive.value)
+    else lyricFx.setStyle(lyricStyleActive.value)
+    stopOthers('particles')
+    lyricFx?.start()
+  } else if (style.renderer === 'physics') {
+    if (!physicsFx) initPhysicsFx()
+    stopOthers('physics')
+    physicsFx?.start()
+  } else {
+    if (!lyricText) initLyricTextFx(lyricStyleActive.value)
+    else lyricText.setStyle(lyricStyleActive.value)
+    stopOthers('text')
+    lyricText?.start()
+  }
+  syncLyricText()
+}
+
+function applyLyricStyle(id, { persist = true } = {}) {
+  const selected = normalizeLyricStyle(id)
+  lyricStyleId.value = selected
+  if (persist) write(STORAGE.lyricStyle, selected)
+  // random 每次调用都抽一个,并尽量避开上一首用过的
+  lyricStyleActive.value = resolveLyricStyle(selected, { previous: lyricStyleActive.value })
+  ensureActiveRenderer()
+  bumpUi()
+}
+
+function cycleLyricStyle() {
+  const base = lyricStyleId.value === RANDOM_STYLE_ID ? lyricStyleActive.value : lyricStyleId.value
+  applyLyricStyle(nextLyricStyle(base))
 }
 
 function toggleLyricFx() {
   lyricFxOn.value = !lyricFxOn.value
   write(LYRIC_FX_STORAGE, lyricFxOn.value ? '1' : '0')
-  if (lyricFxOn.value) {
-    if (!lyricFx) initLyricFx() // 懒创建:没开过时连第二个 WebGL context 都不建
-    else lyricFx.start()
-    syncLyricText()
-  } else {
+  if (lyricFxOn.value) ensureActiveRenderer()
+  else {
     lyricFx?.stop()
+    lyricText?.stop()
+    physicsFx?.stop()
   }
   bumpUi()
 }
-watch([lyricLine, () => track.value?.title], syncLyricText)
+
+watch([lyricLine, activeLyric, () => track.value?.title, () => lyrics.value], syncLyricText)
+// 随机模式:换歌自动换一种;不写存储,免得把 random 模式改掉
+watch(() => track.value?.id, id => {
+  if (id && lyricStyleId.value === RANDOM_STYLE_ID) applyLyricStyle(RANDOM_STYLE_ID, { persist: false })
+})
 
 // ── DJ 打碟台 ──
 // 引擎只建图(挂到 player 的 fxChain 插槽上),面板打开才 attach;
@@ -735,6 +930,7 @@ function onPointerMove(e) {
   const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1
   engine.setPointer(nx, ny)
   lyricFx?.setPointer(nx, ny)
+  physicsFx?.setPointer(nx, ny)
 }
 
 // ── 音符光标 ──
@@ -776,7 +972,11 @@ function switchPalette(id) {
   write(STORAGE.palette, id)
   engine?.setPalette(palette.value)
   // 只有 LAB 态字色跟站点配色;开源态由画面主色接管,别手动覆盖
-  if (!isOpenSource.value) lyricFx?.setPalette(palette.value)
+  if (!isOpenSource.value) {
+    lyricFx?.setPalette(palette.value)
+    lyricText?.setPalette(palette.value.a)
+    physicsFx?.setPalette(palette.value)
+  }
 }
 
 function cycleLoop() {
@@ -846,7 +1046,7 @@ async function toggleFullscreen() {
 }
 function onFullscreenChange() {
   isFullscreen.value = !!document.fullscreenElement
-  setTimeout(() => { engine?.resize(); milk?.resize() }, 60)
+  setTimeout(() => { engine?.resize(); milk?.resize(); physicsFx?.resize() }, 60)
 }
 
 // ── 进度条拖拽 ──
@@ -907,8 +1107,12 @@ function onKeydown(e) {
     switchToOpen()
   } else if (key === 'l' || key === 'L') {
     toggleLyricFx()
+  } else if (key === 'k' || key === 'K') {
+    cycleLyricStyle()
   } else if (key === 's' || key === 'S') {
     cycleRate()
+  } else if (key === 'w' || key === 'W') {
+    if (wakeSupported) toggleKeepAwake()
   } else if (key >= '1' && key <= '6') {
     const s = SCENE_LIST[Number(key) - 1]
     if (s) switchToLab(s.id)
@@ -926,11 +1130,17 @@ function onResizeWindow() {
   engine?.resize()
   milk?.resize()
   lyricFx?.resize()
+  physicsFx?.resize()
 }
 function onVisibility() {
   const hidden = document.hidden
-  if (hidden) lyricFx?.stop()
-  else if (lyricFxOn.value) lyricFx?.start()
+  if (hidden) {
+    lyricFx?.stop()
+    lyricText?.stop()
+    physicsFx?.stop()
+  } else {
+    ensureActiveRenderer()
+  }
 
   if (source.value === 'open') {
     if (hidden) milk?.stop()
@@ -939,14 +1149,17 @@ function onVisibility() {
   }
   if (hidden) engine?.stop()
   else engine?.start()
+  syncWake()
 }
 
 onMounted(() => {
   pageActive = true
+  wake.bind()
   setupResizeObserver()
-  if (lyricFxOn.value) initLyricFx()
+  if (lyricFxOn.value) ensureActiveRenderer()
   player.attachAnalyser?.()
   bumpUi()
+  syncWake()
   boot()
   window.addEventListener('resize', onResizeWindow)
   document.addEventListener('fullscreenchange', onFullscreenChange)
@@ -960,21 +1173,26 @@ onMounted(() => {
 // 全局键盘监听放在 activated/deactivated,离开后才不会继续吃空格/方向键
 onActivated(() => {
   pageActive = true
+  wake.bind()
   if (source.value === 'open') {
     if (milk && !document.hidden) milk.start()
   } else engine?.start()
-  if (lyricFxOn.value) lyricFx?.start()
+  if (lyricFxOn.value) ensureActiveRenderer()
   player.attachAnalyser?.()
   window.addEventListener('keydown', onKeydown)
   if (djOpen.value) dj.attach()
+  syncWake()
 })
 
 onDeactivated(() => {
   pageActive = false
+  syncWake()
   window.removeEventListener('keydown', onKeydown)
   engine?.stop()
   milk?.stop()
   lyricFx?.stop()
+  lyricText?.stop()
+  physicsFx?.stop()
   dj.detach()
   player.detachAnalyser?.()
 })
@@ -995,6 +1213,10 @@ onBeforeUnmount(() => {
   engine = null
   lyricFx?.dispose()
   lyricFx = null
+  lyricText?.dispose()
+  lyricText = null
+  physicsFx?.dispose()
+  physicsFx = null
   milk?.dispose()
   milk = null
   milkPromise = null
@@ -1080,6 +1302,7 @@ onBeforeUnmount(() => {
 }
 .viz-lyric-stage.off { opacity: 0; }
 .viz-lyric-stage :deep(.viz-canvas-lyricfx) { display: block; width: 100% !important; height: 100% !important; }
+.viz-lyric-stage :deep(.viz-canvas-physics) { display: block; }
 /* Butterchurn 的 canvas 后挂且绝对定位,盖住 LAB 的 three 画布;亮度由画面调节控制 */
 .viz-stage :deep(.viz-canvas-milk) {
   position: absolute; inset: 0; background: #000;
@@ -1143,6 +1366,8 @@ onBeforeUnmount(() => {
   transition: all 0.22s ease;
 }
 .viz-icon-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; border-color: rgba(255, 255, 255, 0.26); }
+.viz-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.viz-icon-btn:disabled:hover { background: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.82); border-color: rgba(255, 255, 255, 0.14); }
 .viz-icon-btn.active {
   color: var(--accent); border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -1350,6 +1575,8 @@ onBeforeUnmount(() => {
   transition: all 0.2s ease;
 }
 .m-chip.active { color: #08090d; background: #fff; border-color: transparent; }
+.m-fx-chip { padding: 6px 8px; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
+@media (max-width: 380px) { .m-current em { display: none; } }
 
 /* ── DJ 打碟台 ── */
 .viz-dj {
