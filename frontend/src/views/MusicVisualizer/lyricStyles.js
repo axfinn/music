@@ -6,7 +6,8 @@
 // 三类渲染器:
 //   'particles' —— 复用 lyricfx.js 里同一套 WebGL 粒子/同一块材质,切风格只改
 //                  uniform 和几个 CPU 数字:不多开 context、不重建 buffer、不加 draw call。
-//                  经典 / 涟漪 / 落沙(自由落体) / 星轨 / 爆炸 都属于这一类。
+//                  经典 / 涟漪 / 落沙(自由落体) / 星轨 / 爆炸 / 漩涡 / 丝绸波 / 心跳
+//                  都属于这一类，后三个是真正用到 z 轴与 3D 旋转的立体效果。
 //   'text'      —— 轻量 DOM/CSS 文字层(跳动 / 段落 / 弹幕),完全不占 WebGL,
 //                  动画交给 CSS transform/opacity 的合成层,JS 每帧零 DOM 写入。
 //   'physics'   —— lyricPhysicsFx.js 的 2D canvas 刚体层:字块受重力、落地反弹、
@@ -15,12 +16,22 @@
 
 export const RANDOM_STYLE_ID = 'random'
 
+/** shader 里 uStyle 支持的最大编号。新增粒子风格时，这里和 lyricfx.js 的分支要一起改。 */
+export const MAX_PARTICLE_STYLE = 7
+
 // particles 的 style: 传给 shader 的 uStyle,uniform 分支,所有顶点走同一条路径。
 //   0 经典 / 1 涟漪 / 2 落沙(自由落体) / 3 星轨 / 4 爆炸
+//   5 漩涡(3D 翻转 + 螺旋) / 6 丝绸波(行波 + 纵深) / 7 心跳(双拍纵深脉冲)
 // pointSize/opacity/arc/sway: 手感差异,切换时直接写 uniform。
 // idleBeats: 拼歌名点缀的间隔(拍)。落沙/爆炸有自己的编排,给 0 表示不拼歌名。
 // text 的 effect: 文字层用的动画类型(bounce / paragraph / marquee)。
 // physics 无额外参数:字块大小/重力在 lyricPhysicsFx.js 里按屏宽自适应。
+//
+// readable / tempo —— 随机模式的挑选依据(2026-11-20):
+//   readable:false = 氛围优先、字会被打散到读不出(from 落沙/爆聚/重力),随机池直接排除,
+//                    但仍可手动点选(已各自做过可读性优化)。
+//   tempo: 'fast' / 'slow' / 'any' —— 节奏适配。快歌抽 fast+any,慢歌抽 slow+any,
+//                    节奏未知(检测不到/置信度低)时整池随机。
 export const LYRIC_STYLES = [
   {
     id: 'classic',
@@ -33,6 +44,8 @@ export const LYRIC_STYLES = [
     arc: 1,
     sway: 0.1,
     idleBeats: 40,
+    readable: true,
+    tempo: 'any',
   },
   {
     id: 'ripple',
@@ -45,6 +58,8 @@ export const LYRIC_STYLES = [
     arc: 1.15,
     sway: 0.07,
     idleBeats: 30,
+    readable: true,
+    tempo: 'any',
   },
   {
     id: 'fall',
@@ -57,6 +72,8 @@ export const LYRIC_STYLES = [
     arc: 0.9,
     sway: 0.04,
     idleBeats: 0,          // 落沙自转,不拼歌名
+    readable: false,       // 氛围玩法:字化成沙落下,随机模式避开
+    tempo: 'slow',
   },
   {
     id: 'orbit',
@@ -69,6 +86,8 @@ export const LYRIC_STYLES = [
     arc: 0.8,
     sway: 0.14,
     idleBeats: 36,
+    readable: true,
+    tempo: 'slow',
   },
   {
     id: 'explode',
@@ -81,6 +100,50 @@ export const LYRIC_STYLES = [
     arc: 1.4,
     sway: 0.05,
     idleBeats: 0,          // 爆炸本身就是重组,不叠加拼歌名
+    readable: false,       // 鼓点把字炸成星屑,随机模式避开
+    tempo: 'fast',
+  },
+  {
+    id: 'vortex',
+    label: '漩涡',
+    hint: '字沿 3D 轨迹翻转，粒子绕轮廓螺旋流动，鼓点向屏幕喷出',
+    renderer: 'particles',
+    style: 5,
+    pointSize: 0.05,
+    opacity: 0.72,
+    arc: 1.1,
+    sway: 0.12,
+    idleBeats: 34,
+    readable: true,
+    tempo: 'any',
+  },
+  {
+    id: 'wave',
+    label: '丝绸波',
+    hint: '字排成 3D 绸带，波纹从左往右流动，鼓点扫出一串涟漪',
+    renderer: 'particles',
+    style: 6,
+    pointSize: 0.05,
+    opacity: 0.72,
+    arc: 1,
+    sway: 0.06,
+    idleBeats: 38,
+    readable: true,
+    tempo: 'slow',
+  },
+  {
+    id: 'pulse',
+    label: '心跳',
+    hint: '字随鼓点「咚—哒」双拍胀缩，沿纵深弹出再被吸回',
+    renderer: 'particles',
+    style: 7,
+    pointSize: 0.052,
+    opacity: 0.74,
+    arc: 0.95,
+    sway: 0.08,
+    idleBeats: 30,
+    readable: true,
+    tempo: 'fast',
   },
   {
     id: 'bounce',
@@ -88,6 +151,8 @@ export const LYRIC_STYLES = [
     hint: '整行字按拍点逐字错峰跳，像歌词在打拍子',
     renderer: 'text',
     effect: 'bounce',
+    readable: true,
+    tempo: 'fast',
   },
   {
     id: 'paragraph',
@@ -95,6 +160,8 @@ export const LYRIC_STYLES = [
     hint: '整段歌词滚动聚焦，当前句放大高亮',
     renderer: 'text',
     effect: 'paragraph',
+    readable: true,
+    tempo: 'slow',
   },
   {
     id: 'marquee',
@@ -102,12 +169,16 @@ export const LYRIC_STYLES = [
     hint: '整段歌词分多条轨道从右向左横飞，层层错峰',
     renderer: 'text',
     effect: 'marquee',
+    readable: true,
+    tempo: 'fast',
   },
   {
     id: 'gravity',
     label: '重力',
-    hint: '字块受重力落地反弹、互相碰撞，鼠标能推开',
+    hint: '字块在弹力舞池里持续漂浮碰撞，鼠标推开、点击炸开冲击波',
     renderer: 'physics',
+    readable: false,       // 字拆成单字块到处弹,随机模式避开
+    tempo: 'any',
   },
 ]
 
@@ -122,15 +193,29 @@ export function normalizeLyricStyle(id) {
 }
 
 /**
+ * 随机池:只留「字始终可读」的风格,再按节奏收窄。
+ *   tempo='fast' → fast + any;tempo='slow' → slow + any;未知 → 整池。
+ * 抽空兜底回整池(readable 子集,永远不会含落沙/爆聚/重力)。
+ */
+export function getLyricPool(tempo = '') {
+  const safe = LYRIC_STYLES.filter(s => s.readable !== false)
+  if (tempo !== 'fast' && tempo !== 'slow') return safe
+  const matched = safe.filter(s => s.tempo === tempo || s.tempo === 'any')
+  return matched.length ? matched : safe
+}
+
+/**
  * 把用户选的 id 解析成真正要渲染的具体风格。
  * random 是「每曲一换」的模式:每次调用抽一个,尽量不重复上一首。
  * @param {string} id 用户选择(可能是 'random')
- * @param {{previous?: string, rng?: () => number}} options
+ * @param {{previous?: string, rng?: () => number, tempo?: string}} options
+ *        tempo: 'fast' | 'slow' | ''(未知),来自 tempo.js 的节奏检测
  */
-export function resolveLyricStyle(id, { previous = '', rng = Math.random } = {}) {
+export function resolveLyricStyle(id, { previous = '', rng = Math.random, tempo = '' } = {}) {
   if (id !== RANDOM_STYLE_ID) return getLyricStyle(id).id
-  const pool = LYRIC_STYLES.filter(s => s.id !== previous)
-  const list = pool.length ? pool : LYRIC_STYLES
+  const all = getLyricPool(tempo)
+  const pool = all.filter(s => s.id !== previous)
+  const list = pool.length ? pool : all
   const raw = Number(rng())
   const r = Number.isFinite(raw) ? Math.min(0.999999, Math.max(0, raw)) : 0
   return list[Math.floor(r * list.length)].id

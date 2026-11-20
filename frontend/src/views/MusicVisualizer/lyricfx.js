@@ -67,7 +67,7 @@ const VERT = /* glsl */ `
   uniform float uPixelScale;
   uniform float uBass;
   uniform float uHigh;
-  uniform float uStyle;   // 0 经典 / 1 涟漪 / 2 落沙 / 3 星轨 / 4 爆炸
+  uniform float uStyle;   // 0 经典 / 1 涟漪 / 2 落沙 / 3 星轨 / 4 爆炸 / 5 漩涡 / 6 丝绸波 / 7 心跳
   uniform float uArc;     // 拼歌名时的飞行弧幅度,风格各异
   uniform float uGround;  // 落沙的地面高度(世界坐标 y),随画面高宽比算好写进来
 
@@ -130,34 +130,39 @@ const VERT = /* glsl */ `
       local.xy += dir * wave * (0.014 + uBass * 0.03);
       local.z += wave * 0.045;
     } else if (uStyle > 1.5 && uStyle < 2.5) {
-      // 落沙(自由落体):粒子脱离字形往下掉,触底铺一层再循环。
-      // 每颗粒子有独立的相位(起始高度/速度/横向漂移),所以整体像沙漏而不是齐步走。
-      // 用 fract 做无缝循环:一颗落地后从字块顶部重新出发。
-      // 相位主要跟"字序"走:同一个字的粒子几乎同步下落,字才不会碎成雾;
-      // 只有很小一部分(按 aRand)脱落得快些,形成沙漏里那一缕散沙。
-      float grain = fract(aRand * 7.3);
-      float loose = step(0.86, grain);           // 约 14% 的粒子是"散沙"
-      float chSeed = fract(ch * 0.618 + 0.13);    // 相邻字的相位错开(黄金比),字内一致
-      float seed = fract(chSeed + grain * 0.08);  // 字内只留 0.08 的细微差
-      float speed = 0.11 + chSeed * 0.05 + loose * 0.22;
-      float t = fract(seed + uTime * speed);      // 0→1 一次完整的下落
-      // 起始点到地面的距离,乘 t² 就是自由落体位移(t=1 时正好触地)
-      float startY = c.y + local.y;
-      float travel = max(0.05, startY - uGround);
-      float drop = travel * t * t;
-      float gy = startY - drop;
-      // 触底后铺在地面上方一点(按种子错开高度),堆出薄薄一层而不是一条线
-      gy = max(gy, uGround + fract(aRand * 53.1) * 0.06);
-      // 落地后横向铺开一点(按种子散在字宽内),避免堆成一条竖线
-      float spread = (fract(aRand * 37.7) - 0.5) * (loose > 0.5 ? 0.3 : 0.06);
-      local.x += spread * smoothstep(0.55, 1.0, t);
-      // 把算好的世界 y 换回 local(后面 pos = c + local)
-      local.y = gy - c.y;
-      local.z += sin(seed * 6.28 + uTime * 0.8) * 0.02;
-      // 拍点扬起:整层沙往上弹一下再落下(冲量随时间指数衰减)
-      float dtb2 = uTime - uBeatTime;
-      float kick = dtb2 > 0.0 ? exp(-dtb2 * 3.2) * uBeat * 0.32 : 0.0;
-      local.y += kick * (0.4 + seed * 0.6);
+      // 落沙(自由落体):字化成沙往下掉、触底铺一层再循环。
+      // 2026-11-20 可读性修复:原来**全部**粒子都下落,几秒后地上只剩一堆沙,
+      // 一句歌词都读不出来。现在留 ~55% 做"字芯"(只做极轻的呼吸,始终留在字形上),
+      // 另外 ~45% 才落沙 —— 字永远读得出,沙只是叠加的氛围注解。
+      float isSand = step(0.55, fract(aRand * 19.7));
+      if (isSand > 0.5) {
+        float grain = fract(aRand * 7.3);
+        float loose = step(0.86, grain);         // 约 14% 的粒子是"散沙"
+        float chSeed = fract(ch * 0.618 + 0.13);  // 相邻字的相位错开(黄金比),字内一致
+        float seed = fract(chSeed + grain * 0.08);// 字内只留 0.08 的细微差
+        float speed = 0.11 + chSeed * 0.05 + loose * 0.22;
+        float t = fract(seed + uTime * speed);    // 0→1 一次完整的下落
+        // 起始点到地面的距离,乘 t² 就是自由落体位移(t=1 时正好触地)
+        float startY = c.y + local.y;
+        float travel = max(0.05, startY - uGround);
+        float drop = travel * t * t;
+        float gy = startY - drop;
+        // 触底后铺在地面上方一点(按种子错开高度),堆出薄薄一层而不是一条线
+        gy = max(gy, uGround + fract(aRand * 53.1) * 0.06);
+        // 落地后横向铺开一点(按种子散在字宽内),避免堆成一条竖线
+        float spread = (fract(aRand * 37.7) - 0.5) * (loose > 0.5 ? 0.3 : 0.06);
+        local.x += spread * smoothstep(0.55, 1.0, t);
+        // 把算好的世界 y 换回 local(后面 pos = c + local)
+        local.y = gy - c.y;
+        local.z += sin(seed * 6.28 + uTime * 0.8) * 0.02;
+        // 拍点扬起:落下去的沙往上弹一下再落下(冲量随时间指数衰减)
+        float dtb2 = uTime - uBeatTime;
+        float kick = dtb2 > 0.0 ? exp(-dtb2 * 3.2) * uBeat * 0.32 : 0.0;
+        local.y += kick * (0.4 + seed * 0.6);
+      } else {
+        // 字芯:留在字形上,只加一点点沙漏质感的横向漂移,不破坏可读性
+        local.x += sin(uTime * 1.1 + ph * 1.3) * 0.006;
+      }
     } else if (uStyle > 2.5 && uStyle < 3.5) {
       // 星轨:每个字绕自己的中心慢慢转,角度按字序错开
       float a = uTime * 0.42 + ch * 0.9;
@@ -165,22 +170,79 @@ const VERT = /* glsl */ `
       float sa = sin(a);
       local.xy = mat2(ca, -sa, sa, ca) * local.xy;
       local.z += sin(uTime * 1.3 + ph) * 0.055;
-    } else if (uStyle > 3.5) {
-      // 爆炸(爆聚):鼓点把粒子沿径向炸开,随后弹力吸回原位。
-      // 爆裂强度 burst 随拍点冲量 + 时间指数衰减:啪一下炸开,缓缓收拢。
+    } else if (uStyle > 3.5 && uStyle < 4.5) {
+      // 爆聚:鼓点把粒子沿径向炸开,随后弹力吸回原位。
+      // 2026-11-20 可读性修复:原来**全部**粒子一起炸、回落又慢(2.4 的衰减),
+      // 快歌鼓点密时几乎一直停在炸开的星屑态,一句字都读不出。三处改动:
+      //   ① ~55% 留作字芯,永远不炸(和落沙同一思路);
+      //   ② 炸开幅度砍小(原来最远 1.65 字高 → 现在 0.7);
+      //   ③ 回落加快(衰减 2.4 → 4.6),两拍之间就收拢回字形。
       float dtb3 = uTime - uBeatTime;
-      float burst = dtb3 > 0.0 ? exp(-dtb3 * 2.4) * uBeat : 0.0;
+      float burst = dtb3 > 0.0 ? exp(-dtb3 * 4.6) * uBeat : 0.0;
+      float isCore = step(0.55, fract(aRand * 23.3));
+      float b = burst * (1.0 - isCore);
       float r = length(local.xy);
       vec2 dir = r > 0.0001 ? local.xy / r : vec2(cos(ph), sin(ph));
       // 每颗粒子炸开的距离略有差异,避免齐刷刷一个球面
-      float reach = burst * (0.55 + fract(aRand * 29.3) * 1.1);
+      float reach = b * (0.18 + fract(aRand * 29.3) * 0.52);
       local.xy += dir * reach;
-      local.z += burst * (fract(aRand * 11.7) - 0.5) * 0.9;
+      local.z += b * (fract(aRand * 11.7) - 0.5) * 0.4;
       // 炸开时轻微旋转,收拢时回正
-      float spin = burst * 0.5 * fract(aRand * 7.9);
+      float spin = b * 0.3 * fract(aRand * 7.9);
       float cs2 = cos(spin);
       float sn2 = sin(spin);
       local.xy = mat2(cs2, -sn2, sn2, cs2) * local.xy;
+    } else if (uStyle > 4.5 && uStyle < 5.5) {
+      // ── 漩涡 ── 真正用上第三维：每个字绕自己的字心沿 y 轴缓慢翻转，
+      // 粒子沿字形轮廓螺旋流动；拍点把一层粒子沿 z 轴抛向观众再吸回。
+      // 字的骨架保留（只是翻转，不炸散），所以歌词始终读得出来。
+      float spinY = uTime * (0.5 + uBass * 0.45) + ch * 1.3;
+      float cy = cos(spinY);
+      float sy = sin(spinY);
+      vec2 xz = mat2(cy, -sy, sy, cy) * local.xz;
+      local.x = xz.x;
+      local.z = xz.y;
+
+      float r2 = length(local.xy);
+      float phase = uTime * 2.0 + r2 * 6.0 + ch * 0.6 - uBeat * 1.4;
+      vec2 dir2 = r2 > 0.0001 ? local.xy / r2 : vec2(0.0);
+      local.xy += dir2 * sin(phase) * (0.018 + uBass * 0.035);
+
+      float dtb4 = uTime - uBeatTime;
+      float jet = dtb4 > 0.0 ? exp(-dtb4 * 2.6) * uBeat : 0.0;
+      local.z += jet * (fract(aRand * 23.7) - 0.35) * 1.1;
+    } else if (uStyle > 5.5 && uStyle < 6.5) {
+      // ── 丝绸波 ── 相位跟每个字的世界 x 走，波就从左往右流，不是整行齐步上下。
+      // z 轴起伏最大，配合透视相机有真实的前后层次；字的切线方向再扭一下，像布被卷起。
+      float wx = c.x + local.x;
+      float phase2 = wx * 1.6 - uTime * 2.6;
+      local.z += sin(phase2) * (0.26 + uBass * 0.34);
+      local.y += sin(wx * 1.15 - uTime * 2.0) * (0.055 + uBass * 0.07);
+      float tilt = cos(phase2) * 0.26;
+      float ct = cos(tilt);
+      float st = sin(tilt);
+      vec2 yz = mat2(ct, -st, st, ct) * local.yz;
+      local.y = yz.x;
+      local.z = yz.y;
+      // 拍点：一道冲击波从左扫到右（用平方而不是 pow，避开负底数未定义）
+      float dtb5 = uTime - uBeatTime;
+      float head = dtb5 * 5.0 - 3.0;
+      float dd = (wx - head) * 0.9;
+      float sweep = dtb5 > 0.0 ? exp(-dd * dd) * uBeat : 0.0;
+      local.z += sweep * 0.55;
+    } else if (uStyle > 6.5) {
+      // ── 心跳 ── 一次拍点打出「咚—哒」双峰，字从字心径向胀开 + 沿 z 轴弹出，
+      // 再被弹力吸回。比爆炸克制，却比逐字轻跳更有冲击。
+      float dtb6 = uTime - uBeatTime;
+      float thump = dtb6 > 0.0 ? exp(-dtb6 * 7.5) * sin(dtb6 * 17.0) : 0.0;
+      float e = dtb6 - 0.17;
+      float echo = e > 0.0 ? exp(-e * 10.0) * sin(e * 22.0) * 0.55 : 0.0;
+      float pump = (thump + echo) * (0.4 + uBeat * 0.6);
+      // 没拍点（暂停/静音）时留一点常时的错峰呼吸，字不会变成死的正点阵
+      pump += sin(uTime * 1.9 + ch * 1.6) * 0.045 * (1.0 - uBeat);
+      vec2 dir3 = length(local.xy) > 0.0001 ? normalize(local.xy) : vec2(cos(ph), sin(ph));
+      local.xy += dir3 * pump * (0.09 + fract(aRand * 31.7) * 0.12);
+      local.z += pump * (0.28 + fract(aRand * 7.3) * 0.55);
     }
 
     vec3 pos = c + local;

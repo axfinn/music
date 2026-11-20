@@ -15,7 +15,7 @@
       '--tone-saturate': tone.saturate,
     }"
     @pointermove="onPointerMove"
-    @pointerdown="bumpUi(); tapNote()"
+    @pointerdown="onPointerDown"
     @pointerleave="hideNote"
     tabindex="0"
   >
@@ -276,9 +276,9 @@
 //   MusicVisualizer/milkdrop.js  ★ 默认画面:Butterchurn(MIT)+ 100 个 MilkDrop 社区预设
 //   MusicVisualizer/PresetBrowser.vue 预设库 UI(搜索/收藏/随机/自动轮换/画面调节)
 //   MusicVisualizer/engine.js + scenes.js  LAB:6 个自研场景,仅实验与 WebGL2 回退
-//   MusicVisualizer/lyricfx.js 3D 歌词点云(经典/涟漪/落沙/星轨/爆聚;字色跟随画面主色)
+//   MusicVisualizer/lyricfx.js 3D 歌词点云(经典/涟漪/落沙/星轨/爆聚/漩涡/丝绸波/心跳;字色跟随画面主色)
 //   MusicVisualizer/lyricTextFx.js DOM 字效(跳动/段落/弹幕)
-//   MusicVisualizer/physicsfx.js  2D canvas 刚体物理(重力;字块落地碰撞、鼠标推开)
+//   MusicVisualizer/physicsfx.js  2D canvas 刚体物理(重力;弹力舞池持续悬浮、互撞、点击冲击波)
 //   MusicVisualizer/dj.js      打碟台效果链
 //
 // 三个必须守住的点:
@@ -313,6 +313,7 @@ import {
   LYRIC_STYLES, RANDOM_STYLE_ID, getLyricStyle, nextLyricStyle,
   normalizeLyricStyle, resolveLyricStyle,
 } from './MusicVisualizer/lyricStyles.js'
+import { createTempoDetector } from './MusicVisualizer/tempo.js'
 import PresetBrowser from './MusicVisualizer/PresetBrowser.vue'
 import DjConsole from './MusicVisualizer/DjConsole.vue'
 
@@ -717,10 +718,11 @@ async function switchToOpen(doFlash = true) {
   bumpUi()
 }
 
-// ── 歌词特效:9 种风格,三类渲染器 ──
-// 粒子(经典/涟漪/落沙/星轨/爆聚):共用一块 WebGL 层和一套粒子,切风格只改 uniform;
+// ── 歌词特效:12 种风格,三类渲染器 ──
+// 粒子(经典/涟漪/落沙/星轨/爆聚/漩涡/丝绸波/心跳):共用一块 WebGL 层和一套粒子,切风格只改 uniform;
+// 其中漩涡/丝绸波/心跳用到 z 轴与 3D 旋转,是真立体的点云玩法。
 // 文字(跳动/段落/弹幕):DOM + CSS 合成层动画,不新增 WebGL context、不逐帧写 DOM;
-// 物理(重力):独立 2D canvas 刚体引擎,自研轻量物理,不引第三方库。
+// 物理(重力):独立 2D canvas 刚体引擎,字块在「弹力舞池」里持续漂浮,点击会炸开冲击波。
 // 同一时刻只 start 一个,切风格/切歌不会两边同时烧资源。
 const LYRIC_FX_STORAGE = 'music_viz_lyricfx'
 const lyricStageRef = ref(null)
@@ -734,7 +736,7 @@ const activeLyricStyleLabel = computed(() =>
   lyricStyleId.value === RANDOM_STYLE_ID ? `随机·${activeLyricStyle.value.label}` : activeLyricStyle.value.label)
 const activeLyricStyleHint = computed(() =>
   lyricStyleId.value === RANDOM_STYLE_ID
-    ? `每曲自动换一种 · 当前「${activeLyricStyle.value.label}」`
+    ? `每曲按节奏换一种 · 当前「${activeLyricStyle.value.label}」`
     : activeLyricStyle.value.hint)
 const lastFrameColor = ref('')   // 最近一次画面采样主色(开源态)
 let lyricFx = null
@@ -860,12 +862,50 @@ function ensureActiveRenderer() {
   syncLyricText()
 }
 
-function applyLyricStyle(id, { persist = true } = {}) {
+// ── 随机模式的节奏采样 ──────────────────────────────────────
+// 切歌瞬间拿不到新歌的节奏(频谱还是上一首的尾巴),所以 random 不立刻抽:
+// 先沿用当前特效,等检测器攒够 ~6 拍(约 3 秒,前奏刚好)再按快/慢歌挑池;
+// 纯器乐/静音段等不到就 8 秒后走安全池兜底,不会卡着不换。
+// 采样器只在 random 模式存在,120ms 一次,暂停/切页时跳过。
+const tempoDetector = createTempoDetector({ getAnalyser: () => player.getAnalyser() })
+let tempoTimer = 0
+let tempoWaitMs = 0
+
+function clearTempoSampling() {
+  if (tempoTimer) clearInterval(tempoTimer)
+  tempoTimer = 0
+}
+function startTempoSampling() {
+  clearTempoSampling()
+  tempoDetector.reset()
+  tempoWaitMs = 0
+  tempoTimer = window.setInterval(() => {
+    if (!pageActive || document.hidden || lyricStyleId.value !== RANDOM_STYLE_ID) return
+    if (!playerState.isPlaying) return
+    tempoWaitMs += 120
+    const s = tempoDetector.sample(0.12)
+    if (s.tempo && s.beats >= 6) {
+      applyLyricStyle(RANDOM_STYLE_ID, { persist: false, tempo: s.tempo })
+      clearTempoSampling()
+    } else if (tempoWaitMs > 8000) {
+      // 检测不到稳定拍子(器乐/空档):用安全池兜底,至少避开难读的三种
+      applyLyricStyle(RANDOM_STYLE_ID, { persist: false, tempo: '' })
+      clearTempoSampling()
+    }
+  }, 120)
+}
+
+function applyLyricStyle(id, { persist = true, tempo = '' } = {}) {
   const selected = normalizeLyricStyle(id)
+  // 手动切换要打断正在等节奏的采样,免得几秒后被自动抽的结果覆盖
+  if (persist) clearTempoSampling()
   lyricStyleId.value = selected
   if (persist) write(STORAGE.lyricStyle, selected)
-  // random 每次调用都抽一个,并尽量避开上一首用过的
-  lyricStyleActive.value = resolveLyricStyle(selected, { previous: lyricStyleActive.value })
+  // random 每次调用都抽一个:避开上一首,并按已检测的快慢歌收窄候选池
+  lyricStyleActive.value = resolveLyricStyle(selected, {
+    previous: lyricStyleActive.value,
+    tempo,
+  })
   ensureActiveRenderer()
   bumpUi()
 }
@@ -888,9 +928,11 @@ function toggleLyricFx() {
 }
 
 watch([lyricLine, activeLyric, () => track.value?.title, () => lyrics.value], syncLyricText)
-// 随机模式:换歌自动换一种;不写存储,免得把 random 模式改掉
+// 随机模式:换歌自动换一种;不写存储,免得把 random 模式改掉。
+// 不再立刻抽 —— 启动节奏采样,等新歌攒够拍子再按快/慢歌挑池(见 startTempoSampling)。
 watch(() => track.value?.id, id => {
-  if (id && lyricStyleId.value === RANDOM_STYLE_ID) applyLyricStyle(RANDOM_STYLE_ID, { persist: false })
+  clearTempoSampling()
+  if (id && lyricStyleId.value === RANDOM_STYLE_ID) startTempoSampling()
 })
 
 // ── DJ 打碟台 ──
@@ -931,6 +973,18 @@ function onPointerMove(e) {
   engine.setPointer(nx, ny)
   lyricFx?.setPointer(nx, ny)
   physicsFx?.setPointer(nx, ny)
+}
+
+// 重力字块专属：点击落点炸开一圈冲击波，让"动手操作"本身变成看得见的反馈
+function onPointerDown(e) {
+  bumpUi()
+  tapNote()
+  if (!physicsFx || !lyricFxOn.value || activeLyricStyle.value.renderer !== 'physics') return
+  const rect = stageRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1
+  const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1
+  physicsFx.burst(nx, ny)
 }
 
 // ── 音符光标 ──
@@ -1160,6 +1214,8 @@ onMounted(() => {
   player.attachAnalyser?.()
   bumpUi()
   syncWake()
+  // 上次就停在 random 模式:首屏已有歌就直接开始按节奏挑,不等下次切歌
+  if (track.value?.id && lyricStyleId.value === RANDOM_STYLE_ID) startTempoSampling()
   boot()
   window.addEventListener('resize', onResizeWindow)
   document.addEventListener('fullscreenchange', onFullscreenChange)
@@ -1179,6 +1235,7 @@ onActivated(() => {
   } else engine?.start()
   if (lyricFxOn.value) ensureActiveRenderer()
   player.attachAnalyser?.()
+  if (track.value?.id && lyricStyleId.value === RANDOM_STYLE_ID) startTempoSampling()
   window.addEventListener('keydown', onKeydown)
   if (djOpen.value) dj.attach()
   syncWake()
@@ -1188,6 +1245,7 @@ onDeactivated(() => {
   pageActive = false
   syncWake()
   window.removeEventListener('keydown', onKeydown)
+  clearTempoSampling()
   engine?.stop()
   milk?.stop()
   lyricFx?.stop()
@@ -1202,6 +1260,7 @@ onBeforeUnmount(() => {
   clearTimeout(idleTimer)
   clearTimeout(noteTapTimer)
   clearAuto()
+  clearTempoSampling()
   window.removeEventListener('resize', onResizeWindow)
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('fullscreenchange', onFullscreenChange)

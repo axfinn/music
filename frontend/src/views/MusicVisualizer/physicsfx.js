@@ -13,13 +13,29 @@
 //   · 字块数量按屏宽算,手机上更少;半径/质量按字号定,碰撞 O(n²) 但 n 很小。
 //   · 固定步长积分(1/60),掉帧时最多补 3 步,避免切后台回来物体穿墙。
 //   · 低频/拍点读 analyser 的 0~24 bin,和 lyricTextFx 一样的轻量采样。
+//
+// 观感约定(2026-11-20 重做):
+//   原来重力 1180 + 地面贴底 + 摩擦锁死,字块几秒就全躺在一行,操作时啥也看不见。
+//   现在改成「弹力舞池」:重力减半、地板抬到画面 ~74%(给底部控制条留位置),
+//   触地有保底反弹(永远弹得起来),再叠一层缓慢变化的对流气流 + 每拍给全部字块冲量,
+//   字块会一直悬浮翻滚。点击落点还会炸出一圈冲击波 —— 操作本身就是视觉反馈。
+//
+// 可读性修复(2026-11-20,第二轮):
+//   舞池跳得欢,但字块满屏乱飞,一句歌词始终拼不出来。给每个字块加一个弱「归位弹簧」,
+//   目标是按字序排成一行(HOME_X/HOME_Y):拍点上照样被顶飞、照样碰撞、照样能用鼠标推开,
+//   但冲量过去后几秒内会自己飘回字位 —— 静止时句子读得出来,动起来还是弹力舞池。
+//   重力保留做"坠感",但由弹簧平衡在中上部,不再一路砸到底。
 
 const FONT_STACK = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif'
-const GRAVITY = 1180          // px/s²
-const AIR = 0.998             // 每步空气阻尼(速度衰减)
-const REST = 0.62             // 碰撞恢复系数(弹性)
-const WALL_REST = 0.58        // 墙壁恢复系数
-const FLOOR_FRICTION = 0.86   // 触地横向摩擦
+const GRAVITY = 620           // px/s²（留坠感,由归位弹簧平衡在中上部,不再堆底）
+const AIR = 0.994             // 每步空气阻尼 —— 比原来略收,让归位收得住、不永远飘
+const REST = 0.78             // 碰撞恢复系数(弹性)
+const WALL_REST = 0.72        // 墙壁恢复系数
+const FLOOR_FRICTION = 0.97   // 触地横向摩擦：接近 1，落地不该把横向速度吃掉
+const MIN_BOUNCE = 320        // 落地保底反弹速度（有归位弹簧后不必弹那么高）
+const FLOOR_RATIO = 0.74      // 地板高度占屏比：兜底,字块不该长期待在这
+const HOME_K = 3.4            // 归位弹簧系数(1/s²)：几秒回到字位,但拍点仍打散得动
+const HOME_Y_RATIO = 0.42     // 归位行高度占屏比(中上部,避开底部控制条)
 const FIXED_DT = 1 / 60
 
 function hexToRgb(hex) {
@@ -68,6 +84,15 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
   let title = ''
   let fontSize = 48
 
+  /** 第 i 个字的归位目标:按字序在画面中间排成一行,字距按字号定 */
+  function homeFor(i, n) {
+    const step = Math.min(fontSize * 1.24, (cssW * 0.8) / Math.max(1, n))
+    return {
+      hx: cssW * 0.5 + (i - (n - 1) / 2) * step,
+      hy: cssH * HOME_Y_RATIO,
+    }
+  }
+
   function makeBodies(text) {
     const chars = [...String(text || '')].filter(c => c.trim()).slice(0, isMobile ? 14 : 22)
     fontSize = isMobile
@@ -76,15 +101,18 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
     const r = fontSize * 0.52
     const prev = bodies.length
     bodies = chars.map((ch, i) => {
-      // 复用上一批同下标字块的位置,切行不"啪"一下全清;没有就撒在画面上方
-      const seedX = cssW * (0.2 + 0.6 * ((i + 0.5) / Math.max(1, chars.length)))
+      const home = homeFor(i, chars.length)
+      // 复用上一批同下标字块的位置,切行不"啪"一下全清;没有就撒在字位附近
       const old = prev ? bodies[Math.min(i, prev - 1)] : null
       return {
         ch,
-        x: old ? old.x : seedX + (Math.random() - 0.5) * 18,
-        y: old ? Math.min(old.y, cssH * 0.18) : -r - Math.random() * cssH * 0.3,
-        vx: old ? old.vx * 0.5 : (Math.random() - 0.5) * 60,
-        vy: old ? Math.min(old.vy, 0) : 0,
+        hx: home.hx,
+        hy: home.hy,
+        x: old ? old.x : home.hx + (Math.random() - 0.5) * 18,
+        // 一开始就把字撒在画面中上部，别从屏幕外慢慢掉半天才看得见
+        y: old ? Math.min(old.y, cssH * 0.5) : home.hy + (Math.random() - 0.5) * cssH * 0.3,
+        vx: old ? old.vx * 0.7 : (Math.random() - 0.5) * 90,
+        vy: old ? Math.min(old.vy, 0) : (Math.random() - 0.5) * 60,
         angle: old ? old.angle : (Math.random() - 0.5) * 0.5,
         va: (Math.random() - 0.5) * 1.2,
         r,
@@ -142,20 +170,37 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
   function clearPointer() { pointer.on = false; pointer.x = -9999; pointer.y = -9999 }
 
   // ── 积分 ──
+  let flowT = 0   // 对流气流的相位，由 frame 累加
   function step(dt, bass, beat) {
-    const floorY = cssH - 8
+    const floorY = cssH * FLOOR_RATIO
     for (const b of bodies) {
       b.vy += GRAVITY * dt
+      // 归位弹簧:往自己的字位拉。系数小,拍点冲量(下面)能瞬间打散,
+      // 但一两秒后句子会重新排成一行 —— 这是"重力"能读字的关键。
+      // 拍点刚过(beatPulse 由调用方给 beat)时把弹簧压到 35%,给足散开的空间。
+      const homeK = HOME_K * (beat > 0.3 ? 0.35 : 1)
+      b.vx += (b.hx - b.x) * homeK * dt
+      b.vy += (b.hy - b.y) * homeK * dt
+      // 角度也归位:拍点上还能翻,过后慢慢转正,字才不会一直歪着读不出
+      b.va -= b.angle * homeK * 0.6 * dt
+      // 缓慢变化的对流气流：字块像浮在热气流里，有升有降，永远不会有"全体躺平"的时刻。
+      // 相位按各自位置错开，相邻字块受力不同才不会像一堵墙齐步走。
+      const flow = Math.sin(flowT * 0.9 + b.x * 0.006) * Math.cos(flowT * 0.57 + b.y * 0.004)
+      b.vy -= flow * 420 * dt
+      b.vx += Math.sin(flowT * 0.63 + b.y * 0.009) * 62 * dt
       b.vx *= AIR
       b.vy *= AIR
       b.x += b.vx * dt
       b.y += b.vy * dt
       b.angle += b.va * dt
 
-      // 拍点:给下半场的字块一个向上的冲量,像被低音"顶"起来
-      if (beat > 0.6 && b.y > cssH * 0.45 && Math.random() < 0.22) {
-        b.vy -= (140 + bass * 260) * beat
-        b.va += (Math.random() - 0.5) * 3
+      // 拍点：每颗字块都被低音"顶"一下，力度/方向各自随机 —— 整堆字像在蹦床上跳舞。
+      // 原来是"只有下半场 22% 概率"跳一下，力量太弱，压不住重力。
+      if (beat > 0.3) {
+        const power = (170 + bass * 360) * beat * (0.55 + Math.random() * 0.9)
+        b.vy -= power
+        b.vx += (Math.random() - 0.5) * power * 0.85
+        b.va += (Math.random() - 0.5) * 4.5
       }
 
       // 鼠标推开:半径内的字块受一个反向冲量
@@ -163,13 +208,13 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
         const dx = b.x - pointer.x
         const dy = b.y - pointer.y
         const d2 = dx * dx + dy * dy
-        const R = 110
+        const R = 130
         if (d2 < R * R && d2 > 0.01) {
           const d = Math.sqrt(d2)
-          const f = (1 - d / R) * 900
+          const f = (1 - d / R) * 1150
           b.vx += (dx / d) * f * dt
           b.vy += (dy / d) * f * dt
-          b.va += (dx / d) * f * dt * 0.01
+          b.va += (dx / d) * f * dt * 0.012
         }
       }
 
@@ -177,17 +222,32 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
       if (b.x - b.r < 0) { b.x = b.r; b.vx = Math.abs(b.vx) * WALL_REST }
       else if (b.x + b.r > cssW) { b.x = cssW - b.r; b.vx = -Math.abs(b.vx) * WALL_REST }
       if (b.y - b.r < 0) { b.y = b.r; b.vy = Math.abs(b.vy) * WALL_REST }
-      // 地面
+      // 地面（抬高 + 保底反弹）：撞地越狠弹得越高，慢速落下也会被弹回空中，绝不躺平。
       if (b.y + b.r > floorY) {
         b.y = floorY - b.r
-        b.vy = -Math.abs(b.vy) * WALL_REST
+        b.vy = -Math.max(Math.abs(b.vy) * WALL_REST, MIN_BOUNCE)
         b.vx *= FLOOR_FRICTION
         b.va *= FLOOR_FRICTION
-        // 躺平:低速时把角度慢慢收回 0,免得字一直歪着
-        if (Math.abs(b.vy) < 40) b.angle += (0 - b.angle) * Math.min(1, dt * 4)
       }
     }
     resolveCollisions()
+  }
+
+  /** 点击冲击波：从归一化落点向外炸开一圈，操作本身就有画面反馈 */
+  function burst(nx, ny) {
+    const px = (nx * 0.5 + 0.5) * cssW
+    const py = (-ny * 0.5 + 0.5) * cssH
+    const R = Math.max(cssW, cssH) * 0.6
+    for (const b of bodies) {
+      const dx = b.x - px
+      const dy = b.y - py
+      const d = Math.max(14, Math.hypot(dx, dy))
+      if (d > R) continue
+      const f = (1 - d / R) * (300 + Math.random() * 240)
+      b.vx += (dx / d) * f
+      b.vy += (dy / d) * f - 90          // 顺带往上托一下，避免只往两侧摊平
+      b.va += (Math.random() - 0.5) * 7
+    }
   }
 
   // 圆-圆碰撞:位置分离 + 弹性冲量。n 小(≤22),O(n²) 足够
@@ -255,6 +315,7 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
     raf = requestAnimationFrame(frame)
     const dt = last ? Math.min((now - last) / 1000, 0.05) : FIXED_DT
     last = now
+    flowT += dt
     const bass = readBass(dt)
 
     beatCooldown = Math.max(0, beatCooldown - dt)
@@ -286,18 +347,22 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
     canvas.style.width = '100%'
     canvas.style.height = '100%'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    // 尺寸变了字号要重算;位置钳回画面内
+    // 尺寸变了字号/字位要重算;位置钳回画面内
     if (bodies.length) {
       const fs = isMobile
         ? Math.max(26, Math.min(46, cssW / 9))
         : Math.max(36, Math.min(74, cssW / 18))
       const scale = fs / fontSize
       fontSize = fs
-      for (const b of bodies) {
+      const n = bodies.length
+      bodies.forEach((b, i) => {
+        const home = homeFor(i, n)
+        b.hx = home.hx
+        b.hy = home.hy
         b.r *= scale
         b.x = Math.max(b.r, Math.min(cssW - b.r, b.x))
-        b.y = Math.max(b.r, Math.min(cssH - b.r, b.y))
-      }
+        b.y = Math.max(b.r, Math.min(cssH * FLOOR_RATIO - b.r, b.y))
+      })
     }
   }
 
@@ -331,6 +396,7 @@ export function createPhysicsFx({ container, getAnalyser, isPlaying = () => fals
     resize,
     setPointer,
     clearPointer,
+    burst,
     setPalette,
     setFrameColor,
     setLine,

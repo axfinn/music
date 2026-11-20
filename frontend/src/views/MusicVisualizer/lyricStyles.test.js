@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  LYRIC_STYLES, RANDOM_STYLE_ID, getLyricStyle, normalizeLyricStyle,
-  resolveLyricStyle, nextLyricStyle,
+  LYRIC_STYLES, RANDOM_STYLE_ID, MAX_PARTICLE_STYLE, getLyricStyle, normalizeLyricStyle,
+  resolveLyricStyle, nextLyricStyle, getLyricPool,
 } from './lyricStyles.js'
 
 const ids = LYRIC_STYLES.map(s => s.id)
@@ -13,12 +13,17 @@ describe('歌词特效风格表', () => {
     expect(LYRIC_STYLES.some(s => s.renderer === 'text')).toBe(true)
     expect(LYRIC_STYLES.some(s => s.renderer === 'physics')).toBe(true)
     expect(ids).toContain('classic')
+    // 三个立体特效（漩涡/丝绸波/心跳）必须都在，且都走粒子渲染器
+    for (const id of ['vortex', 'wave', 'pulse']) {
+      expect(ids).toContain(id)
+      expect(getLyricStyle(id).renderer).toBe('particles')
+    }
   })
 
   it('粒子风格的参数齐全且落在 shader 支持的区间', () => {
     for (const s of LYRIC_STYLES.filter(x => x.renderer === 'particles')) {
       expect(s.style).toBeGreaterThanOrEqual(0)
-      expect(s.style).toBeLessThanOrEqual(4)
+      expect(s.style).toBeLessThanOrEqual(MAX_PARTICLE_STYLE)
       expect(s.pointSize).toBeGreaterThan(0)
       expect(s.opacity).toBeGreaterThan(0)
       expect(s.opacity).toBeLessThanOrEqual(1)
@@ -42,6 +47,15 @@ describe('歌词特效风格表', () => {
       expect(s.hint).toBeTruthy()
       expect(['particles', 'text', 'physics']).toContain(s.renderer)
     }
+  })
+
+  it('每种风格都标了可读性与节奏，高风险仅限三个氛围玩法', () => {
+    for (const s of LYRIC_STYLES) {
+      expect(typeof s.readable).toBe('boolean')
+      expect(['fast', 'slow', 'any']).toContain(s.tempo)
+    }
+    const risky = LYRIC_STYLES.filter(s => !s.readable).map(s => s.id).sort()
+    expect(risky).toEqual(['explode', 'fall', 'gravity'])
   })
 })
 
@@ -76,6 +90,35 @@ describe('随机与循环', () => {
     for (const bad of [NaN, -5, 9, undefined]) {
       const picked = resolveLyricStyle(RANDOM_STYLE_ID, { rng: () => bad })
       expect(ids).toContain(picked)
+    }
+  })
+
+  it('随机池只含可读风格，按快慢歌收窄且不会抽空', () => {
+    const all = getLyricPool()
+    expect(all.length).toBeGreaterThan(0)
+    expect(all.every(s => s.readable)).toBe(true)
+    expect(all.map(s => s.id)).not.toContain('fall')
+    expect(all.map(s => s.id)).not.toContain('explode')
+    expect(all.map(s => s.id)).not.toContain('gravity')
+
+    const fast = getLyricPool('fast')
+    const slow = getLyricPool('slow')
+    expect(fast.length).toBeGreaterThan(0)
+    expect(slow.length).toBeGreaterThan(0)
+    expect(fast.every(s => s.tempo === 'fast' || s.tempo === 'any')).toBe(true)
+    expect(slow.every(s => s.tempo === 'slow' || s.tempo === 'any')).toBe(true)
+    expect(fast.map(s => s.id)).toContain('bounce')
+    expect(slow.map(s => s.id)).toContain('paragraph')
+  })
+
+  it('random 按节奏只在对应池里抽，并规避难读特效', () => {
+    for (let i = 0; i < 40; i++) {
+      const fast = resolveLyricStyle(RANDOM_STYLE_ID, { tempo: 'fast', rng: () => i / 40 })
+      const slow = resolveLyricStyle(RANDOM_STYLE_ID, { tempo: 'slow', rng: () => i / 40 })
+      expect(getLyricPool('fast').map(s => s.id)).toContain(fast)
+      expect(getLyricPool('slow').map(s => s.id)).toContain(slow)
+      expect(['fall', 'explode', 'gravity']).not.toContain(fast)
+      expect(['fall', 'explode', 'gravity']).not.toContain(slow)
     }
   })
 
